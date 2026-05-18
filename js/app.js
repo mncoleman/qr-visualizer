@@ -158,46 +158,33 @@ function getReadPath(version) {
 // --- Per-frame scan + draw loop ---
 let lastFormatInfoVersion = -1;
 
-// --- Camera zoom (native MediaTrack constraints) ---
+// --- Camera zoom (CSS-based digital zoom) ---
+// We deliberately avoid track.applyConstraints({ zoom }) — it's flaky on iOS
+// and bad values can kill the stream. CSS transform is consistent everywhere.
+const ZOOM_MIN = 1.0;
+const ZOOM_MAX = 5.0;
+const zoomStage = document.getElementById('zoom-stage');
+
 function setupZoom() {
-  if (!stream) return;
-  const track = stream.getVideoTracks()[0];
-  const caps = track.getCapabilities?.();
-  if (caps && typeof caps.zoom === 'object') {
-    zoomCaps = { min: caps.zoom.min ?? 1, max: caps.zoom.max ?? 1, step: caps.zoom.step ?? 0.1 };
-    if (zoomCaps.max > zoomCaps.min) {
-      zoomValue = Math.max(zoomCaps.min, Math.min(zoomCaps.max, 1));
-      zoomControls.hidden = false;
-      if (zoomSlider) {
-        zoomSlider.min = String(zoomCaps.min);
-        zoomSlider.max = String(zoomCaps.max);
-        zoomSlider.step = String(zoomCaps.step || 0.1);
-        zoomSlider.value = String(zoomValue);
-      }
-      updateZoomReadout();
-      return;
-    }
+  zoomValue = 1;
+  if (zoomSlider) {
+    zoomSlider.min = String(ZOOM_MIN);
+    zoomSlider.max = String(ZOOM_MAX);
+    zoomSlider.step = '0.1';
+    zoomSlider.value = '1';
   }
-  zoomCaps = null;
-  zoomControls.hidden = true;
+  applyZoom(1);
 }
 
 function updateZoomReadout() {
-  zoomReadout.textContent = `${zoomValue.toFixed(zoomValue < 10 ? 1 : 0)}×`;
+  zoomReadout.textContent = `${zoomValue.toFixed(1)}×`;
 }
 
-async function applyZoom(target) {
-  if (!stream || !zoomCaps) return;
-  const v = Math.max(zoomCaps.min, Math.min(zoomCaps.max, target));
-  const track = stream.getVideoTracks()[0];
-  try {
-    await track.applyConstraints({ advanced: [{ zoom: v }] });
-    zoomValue = v;
-    updateZoomReadout();
-    if (zoomSlider) zoomSlider.value = String(v);
-  } catch (e) {
-    console.warn('Zoom constraint rejected', e);
-  }
+function applyZoom(target) {
+  const v = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Number(target) || 1));
+  zoomValue = v;
+  if (zoomStage) zoomStage.style.setProperty('--zoom', String(v));
+  updateZoomReadout();
 }
 
 // --- Freeze / resume ---
