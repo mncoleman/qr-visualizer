@@ -80,12 +80,15 @@ function decodeByte(bits, offset, len) {
 }
 
 // Walk a bit matrix in path order to produce the bits (XOR with mask at data modules).
+// `bitMatrix` is { bits: Uint8Array, size } from sampleBitMatrix.
 export function extractPathBits(bitMatrix, readPath, maskIndex) {
   const formula = MASK_FORMULAS[maskIndex] || MASK_FORMULAS[0];
+  const flat = bitMatrix.bits;
+  const size = bitMatrix.size;
   const bits = new Uint8Array(readPath.length);
   for (let i = 0; i < readPath.length; i++) {
     const [r, c] = readPath[i];
-    const raw = bitMatrix[r][c] ? 1 : 0;
+    const raw = flat[r * size + c];
     const flip = formula(r, c) ? 1 : 0;
     bits[i] = raw ^ flip;
   }

@@ -14,6 +14,21 @@ import { EXPLANATIONS, MODE_INFO } from './explanations.js';
 
 const jsQR = window.jsQR;
 
+// --- HTML escape helper for all innerHTML insertions of QR-derived content ---
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"'`]/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '`': '&#96;' }[c]));
+}
+
+// Allowlist URL schemes for href attributes — defense-in-depth on top of interpretContent.
+function isSafeHref(url) {
+  if (typeof url !== 'string' || !url) return false;
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:' || u.protocol === 'http:';
+  } catch { return false; }
+}
+
 // --- DOM refs ---
 const video = document.getElementById('video');
 const captureCanvas = document.getElementById('capture');
@@ -119,22 +134,23 @@ function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
 function isPlausibleDetection(result, frameW, frameH) {
   if (!result.data && (!result.chunks || result.chunks.length === 0)) return false;
   const { topLeftCorner: tl, topRightCorner: tr, bottomLeftCorner: bl, bottomRightCorner: br } = result.location;
-  const sides = [dist(tl, tr), dist(tr, br), dist(br, bl), dist(bl, tl)];
-  const minSide = Math.min(...sides);
-  const maxSide = Math.max(...sides);
+  const s1 = dist(tl, tr), s2 = dist(tr, br), s3 = dist(br, bl), s4 = dist(bl, tl);
+  const minSide = s1 < s2 ? (s1 < s3 ? (s1 < s4 ? s1 : s4) : (s3 < s4 ? s3 : s4))
+                          : (s2 < s3 ? (s2 < s4 ? s2 : s4) : (s3 < s4 ? s3 : s4));
+  const maxSide = s1 > s2 ? (s1 > s3 ? (s1 > s4 ? s1 : s4) : (s3 > s4 ? s3 : s4))
+                          : (s2 > s3 ? (s2 > s4 ? s2 : s4) : (s3 > s4 ? s3 : s4));
   if (minSide < 30) return false;
   if (maxSide / minSide > 3.5) return false;
-  if (minSide > Math.max(frameW, frameH)) return false;
+  if (minSide > (frameW > frameH ? frameW : frameH)) return false;
   const d1 = dist(tl, br);
   const d2 = dist(tr, bl);
-  if (Math.max(d1, d2) / Math.min(d1, d2) > 2.5) return false;
-  const pts = [tl, tr, br, bl];
-  let area = 0;
-  for (let i = 0; i < 4; i++) {
-    const a = pts[i], b = pts[(i + 1) % 4];
-    area += a.x * b.y - b.x * a.y;
-  }
-  area = Math.abs(area) / 2;
+  if ((d1 > d2 ? d1 / d2 : d2 / d1) > 2.5) return false;
+  // Shoelace area
+  let area = (tl.x * tr.y - tr.x * tl.y)
+           + (tr.x * br.y - br.x * tr.y)
+           + (br.x * bl.y - bl.x * br.y)
+           + (bl.x * tl.y - tl.x * bl.y);
+  area = area < 0 ? -area / 2 : area / 2;
   if (area < minSide * minSide * 0.4) return false;
   return true;
 }
@@ -236,6 +252,11 @@ function resumeFrame() {
   freezeBtn.setAttribute('aria-label', 'Freeze frame');
   freezeBtn.title = 'Freeze';
   document.getElementById('freeze-icon').innerHTML = '<rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/>';
+  // Resume scanning; let detection refresh qrInfo before we draw the scrubber again
+  if (qrInfo) {
+    scrubPos = 0;
+    scrubPlaying = true;
+  }
   scanning = true;
   requestAnimationFrame(scanLoop);
 }
@@ -288,7 +309,11 @@ function ensureBitstream(qi, imageData) {
 }
 
 function updateScrubUI() {
-  if (!qrInfo || !qrInfo.pathBits) return;
+  if (!qrInfo || !qrInfo.pathBits) {
+    scrubber.hidden = true;
+    scrubInfo.innerHTML = '';
+    return;
+  }
   const total = qrInfo.pathBits.length;
   const idx = Math.max(0, Math.min(total - 1, Math.floor(scrubPos)));
   scrubSlider.max = String(total - 1);
@@ -320,7 +345,8 @@ function renderScrubInfo(idx) {
     const isNow = bi === idx;
     bitCells.push(`<span class="bit ${on ? 'on' : ''} ${isNow ? 'now' : ''}">${on}</span>`);
   }
-  // Decode this byte to a hex + char (where applicable)
+  // Decode this byte to a hex + char (where applicable).
+  // Anything derived from QR content goes through HTML-escape before innerHTML.
   let byteHex = '—', byteInterp = '—';
   if (byteStartBit + 8 <= qrInfo.pathBits.length) {
     let v = 0;
@@ -329,8 +355,7 @@ function renderScrubInfo(idx) {
     if (info.role === 'content' && info.chunkIndex != null) {
       const chunk = chunks[info.chunkIndex];
       if (chunk?.mode === 0b0100) {
-        // byte mode → ASCII / control
-        if (v >= 32 && v < 127) byteInterp = `'${String.fromCharCode(v)}'`;
+        if (v >= 32 && v < 127) byteInterp = `'${escapeHtml(String.fromCharCode(v))}'`;
         else byteInterp = `(byte ${v})`;
       }
     }
@@ -351,7 +376,7 @@ function renderScrubInfo(idx) {
   let modeExtra = '';
   if (info.role === 'mode' && info.chunkIndex != null) {
     const chunk = chunks[info.chunkIndex];
-    modeExtra = `<div class="hint" style="color:var(--muted); font-size:12px; margin-top:2px;">Mode = <code>${(chunk?.mode ?? 0).toString(2).padStart(4, '0')}</code> → ${chunk?.modeName || '?'}</div>`;
+    modeExtra = `<div class="hint" style="color:var(--muted); font-size:12px; margin-top:2px;">Mode = <code>${(chunk?.mode ?? 0).toString(2).padStart(4, '0')}</code> → ${escapeHtml(chunk?.modeName || '?')}</div>`;
   }
   // Length explanation
   let lengthExtra = '';
@@ -411,14 +436,13 @@ function scanLoop(ts) {
       const version = result.version || 1;
       const { size, regions: grouped } = getRegionsForVersion(version);
 
-      // Decode format info only on first lock / version change (it's the costly part).
-      let formatInfo = qrInfo?.formatInfo || null;
-      if (!qrInfo || qrInfo.version !== version || qrInfo.data !== result.data) {
-        try {
-          const bm = sampleBitMatrix(img, result.location, size);
-          formatInfo = decodeFormatInfo(bm, size);
-        } catch {}
-      }
+      // Always re-decode format info — two QRs with identical payload can use
+      // different masks, and caching by data string would lock in a wrong mask.
+      let formatInfo = null;
+      try {
+        const bm = sampleBitMatrix(img, result.location, size);
+        formatInfo = decodeFormatInfo(bm, size);
+      } catch {}
 
       qrInfo = {
         version,
@@ -462,9 +486,59 @@ function clearOverlay() {
   ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
 }
 
+// Per-detection projected corners + centers — recomputed only when the
+// detected location changes. Cuts the dominant per-frame allocation cost.
+let cornersBuf = null;       // Float32Array length size*size*8 (4 corners × x,y)
+let centersBuf = null;       // Float32Array length size*size*2
+let cornersForLocation = null;
+let cornersSize = 0;
+
+function ensureCornersBuf() {
+  if (!qrInfo) return;
+  const size = qrInfo.size;
+  const loc = qrInfo.location;
+  // Detect location change cheaply
+  const key = loc.topLeftCorner.x + ',' + loc.topLeftCorner.y + ',' +
+              loc.topRightCorner.x + ',' + loc.topRightCorner.y + ',' +
+              loc.bottomLeftCorner.x + ',' + loc.bottomLeftCorner.y + ',' +
+              loc.bottomRightCorner.x + ',' + loc.bottomRightCorner.y;
+  if (cornersForLocation === key && cornersSize === size) return;
+  cornersForLocation = key;
+  cornersSize = size;
+  const n = size * size;
+  if (!cornersBuf || cornersBuf.length !== n * 8) {
+    cornersBuf = new Float32Array(n * 8);
+    centersBuf = new Float32Array(n * 2);
+  }
+  const tl = loc.topLeftCorner, tr = loc.topRightCorner;
+  const bl = loc.bottomLeftCorner, br = loc.bottomRightCorner;
+  const inv = 1 / size;
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      const base = (r * size + c) * 8;
+      // Four corners: TL(0,0), TR(1,0), BR(1,1), BL(0,1) — order matters for fill
+      for (let k = 0; k < 4; k++) {
+        let du, dv;
+        if (k === 0) { du = 0; dv = 0; }
+        else if (k === 1) { du = 1; dv = 0; }
+        else if (k === 2) { du = 1; dv = 1; }
+        else { du = 0; dv = 1; }
+        const uF = (c + du) * inv;
+        const vF = (r + dv) * inv;
+        const omu = 1 - uF, omv = 1 - vF;
+        cornersBuf[base + k * 2]     = omu * omv * tl.x + uF * omv * tr.x + omu * vF * bl.x + uF * vF * br.x;
+        cornersBuf[base + k * 2 + 1] = omu * omv * tl.y + uF * omv * tr.y + omu * vF * bl.y + uF * vF * br.y;
+      }
+      const cb = (r * size + c) * 2;
+      centersBuf[cb]     = (cornersBuf[base]     + cornersBuf[base + 4]) / 2;
+      centersBuf[cb + 1] = (cornersBuf[base + 1] + cornersBuf[base + 5]) / 2;
+    }
+  }
+}
+
 function moduleCenter(r, c) {
-  const cn = moduleCorners(qrInfo.location, qrInfo.size, r, c);
-  return { x: (cn[0].x + cn[2].x) / 2, y: (cn[0].y + cn[2].y) / 2 };
+  const base = (r * qrInfo.size + c) * 2;
+  return { x: centersBuf[base], y: centersBuf[base + 1] };
 }
 
 // How many on-screen pixels does one QR module span right now?
@@ -484,6 +558,7 @@ function moduleScreenSize() {
 
 function drawOverlay() {
   if (!qrInfo) return;
+  ensureCornersBuf();
   const ctx = overlayCanvas.getContext('2d');
   ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
 
@@ -492,45 +567,41 @@ function drawOverlay() {
 }
 
 function drawRegions(ctx) {
-  // Pass 1: fill each region's cells
+  const size = qrInfo.size;
+  const buf = cornersBuf;
+  // Pass 1: fill each region's cells (from cached corners — zero allocs)
   for (const region of regions) {
     const color = COLORS[region.type];
     if (!color) continue;
     ctx.fillStyle = color.fill;
     ctx.beginPath();
     for (const [r, c] of region.cells) {
-      const cn = moduleCorners(qrInfo.location, qrInfo.size, r, c);
-      ctx.moveTo(cn[0].x, cn[0].y);
-      ctx.lineTo(cn[1].x, cn[1].y);
-      ctx.lineTo(cn[2].x, cn[2].y);
-      ctx.lineTo(cn[3].x, cn[3].y);
+      const base = (r * size + c) * 8;
+      ctx.moveTo(buf[base],     buf[base + 1]);
+      ctx.lineTo(buf[base + 2], buf[base + 3]);
+      ctx.lineTo(buf[base + 4], buf[base + 5]);
+      ctx.lineTo(buf[base + 6], buf[base + 7]);
       ctx.closePath();
     }
     ctx.fill();
   }
-
-  // Pass 2: outline non-data regions for clarity
+  // Pass 2: outline non-data regions, using precomputed bounds
   for (const region of regions) {
     if (region.type === T.DATA) continue;
     const color = COLORS[region.type];
     if (!color) continue;
+    const { r0, r1, c0, c1 } = region.bounds;
+    const tlIdx = (r0 * size + c0) * 8;
+    const trIdx = (r0 * size + (c1 - 1)) * 8;
+    const brIdx = ((r1 - 1) * size + (c1 - 1)) * 8;
+    const blIdx = ((r1 - 1) * size + c0) * 8;
     ctx.strokeStyle = color.stroke;
     ctx.lineWidth = 1.5;
-    const rows = region.cells.map((c) => c[0]);
-    const cols = region.cells.map((c) => c[1]);
-    const r0 = Math.min(...rows);
-    const r1 = Math.max(...rows) + 1;
-    const c0 = Math.min(...cols);
-    const c1 = Math.max(...cols) + 1;
-    const tl = moduleCorners(qrInfo.location, qrInfo.size, r0, c0)[0];
-    const tr = moduleCorners(qrInfo.location, qrInfo.size, r0, c1 - 1)[1];
-    const br = moduleCorners(qrInfo.location, qrInfo.size, r1 - 1, c1 - 1)[2];
-    const bl = moduleCorners(qrInfo.location, qrInfo.size, r1 - 1, c0)[3];
     ctx.beginPath();
-    ctx.moveTo(tl.x, tl.y);
-    ctx.lineTo(tr.x, tr.y);
-    ctx.lineTo(br.x, br.y);
-    ctx.lineTo(bl.x, bl.y);
+    ctx.moveTo(buf[tlIdx],     buf[tlIdx + 1]);
+    ctx.lineTo(buf[trIdx + 2], buf[trIdx + 3]);
+    ctx.lineTo(buf[brIdx + 4], buf[brIdx + 5]);
+    ctx.lineTo(buf[blIdx + 6], buf[blIdx + 7]);
     ctx.closePath();
     ctx.stroke();
   }
@@ -545,17 +616,21 @@ function drawRegions(ctx) {
 //   6. The codeword the cursor is currently inside gets a bright outline.
 function drawReadPath(ctx) {
   const screenPx = moduleScreenSize();
+  const size = qrInfo.size;
+  const buf = cornersBuf;
+  const cBuf = centersBuf;
+
   // Pass 1: dim function patterns
   for (const region of regions) {
     if (region.type === T.DATA) continue;
     ctx.fillStyle = 'rgba(15, 21, 48, 0.72)';
     ctx.beginPath();
     for (const [r, c] of region.cells) {
-      const cn = moduleCorners(qrInfo.location, qrInfo.size, r, c);
-      ctx.moveTo(cn[0].x, cn[0].y);
-      ctx.lineTo(cn[1].x, cn[1].y);
-      ctx.lineTo(cn[2].x, cn[2].y);
-      ctx.lineTo(cn[3].x, cn[3].y);
+      const base = (r * size + c) * 8;
+      ctx.moveTo(buf[base],     buf[base + 1]);
+      ctx.lineTo(buf[base + 2], buf[base + 3]);
+      ctx.lineTo(buf[base + 4], buf[base + 5]);
+      ctx.lineTo(buf[base + 6], buf[base + 7]);
       ctx.closePath();
     }
     ctx.fill();
@@ -564,23 +639,26 @@ function drawReadPath(ctx) {
   // Pass 2: codeword color fill (faint)
   for (let i = 0; i < readPath.length; i++) {
     const [r, c] = readPath[i];
-    const codeword = Math.floor(i / 8);
+    const codeword = (i / 8) | 0;
     const hue = (codeword * 47) % 360;
-    const cn = moduleCorners(qrInfo.location, qrInfo.size, r, c);
+    const base = (r * size + c) * 8;
     ctx.fillStyle = `hsla(${hue}, 80%, 60%, 0.35)`;
     ctx.beginPath();
-    ctx.moveTo(cn[0].x, cn[0].y);
-    ctx.lineTo(cn[1].x, cn[1].y);
-    ctx.lineTo(cn[2].x, cn[2].y);
-    ctx.lineTo(cn[3].x, cn[3].y);
+    ctx.moveTo(buf[base],     buf[base + 1]);
+    ctx.lineTo(buf[base + 2], buf[base + 3]);
+    ctx.lineTo(buf[base + 4], buf[base + 5]);
+    ctx.lineTo(buf[base + 6], buf[base + 7]);
     ctx.closePath();
     ctx.fill();
   }
 
   if (readPath.length === 0) return;
 
-  // Compute per-bit centers (canvas-space) once
-  const centers = readPath.map(([r, c]) => moduleCenter(r, c));
+  // Use cached centers — no allocation per frame
+  const centers = readPath.map(([r, c]) => {
+    const ci = (r * size + c) * 2;
+    return { x: cBuf[ci], y: cBuf[ci + 1] };
+  });
 
   // Estimate one "module" in canvas pixels for sizing lines/dots consistently
   const modCanvasPx = Math.hypot(
@@ -730,13 +808,21 @@ function clientToCanvas(clientX, clientY, rect) {
   return { x: px, y: py };
 }
 
+// Reused scratch quad for hit-test — avoids 4-object allocation per cell test.
+const _hitQuad = [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }];
 function findRegionAt(point) {
-  if (!qrInfo) return null;
-  // Iterate regions, then cells. Stop at first hit.
+  if (!qrInfo || !cornersBuf) return null;
+  const size = qrInfo.size;
+  const buf = cornersBuf;
   for (const region of regions) {
+    // Fast-skip via precomputed bounds first, then per-cell
     for (const [r, c] of region.cells) {
-      const quad = moduleCorners(qrInfo.location, qrInfo.size, r, c);
-      if (pointInQuad(point, quad)) return region;
+      const base = (r * size + c) * 8;
+      _hitQuad[0].x = buf[base];     _hitQuad[0].y = buf[base + 1];
+      _hitQuad[1].x = buf[base + 2]; _hitQuad[1].y = buf[base + 3];
+      _hitQuad[2].x = buf[base + 4]; _hitQuad[2].y = buf[base + 5];
+      _hitQuad[3].x = buf[base + 6]; _hitQuad[3].y = buf[base + 7];
+      if (pointInQuad(point, _hitQuad)) return region;
     }
   }
   return null;
@@ -809,16 +895,14 @@ function renderSummary() {
   const chunks = summarizeChunks(qrInfo.chunks);
   const f = qrInfo.formatInfo;
 
-  const escape = (s) =>
-    String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-
+  const escape = escapeHtml;
   const modeBadges = chunks.map((c) => `<span class="badge">${escape(c.mode)}</span>`).join('');
 
   let interpHtml = '';
-  if (interp.kind === 'url') {
-    interpHtml = `<a href="${escape(interp.url)}" target="_blank" rel="noopener noreferrer">${escape(interp.url)}</a><div class="hint">${escape(interp.detail)}</div>`;
+  if (interp.kind === 'url' && isSafeHref(interp.url)) {
+    interpHtml = `<a href="${escape(interp.url)}" target="_blank" rel="noopener noreferrer">${escape(interp.url)}</a><div class="hint">${escape(interp.detail || '')}</div>`;
   } else {
-    interpHtml = `<div>${escape(interp.detail)}</div>`;
+    interpHtml = `<div>${escape(interp.detail || interp.url || qrInfo.data || '')}</div>`;
   }
 
   const tip = (label, body) =>
@@ -987,10 +1071,15 @@ function backToLive() {
   regions = [];
   summary.hidden = true;
   resumeBtn.hidden = true;
+  scrubber.hidden = true;
+  scrubPos = 0;
+  scrubPlaying = true;
+  stopAnimLoop();
   closeSheet();
   captureCanvas.style.display = 'none';
   video.style.display = 'block';
   clearOverlay();
+  document.body.classList.remove('tracking');
   if (!stream) startCamera();
   else { scanning = true; requestAnimationFrame(scanLoop); }
 }
@@ -1060,6 +1149,7 @@ if (zoomSlider) {
 }
 
 scrubSlider.addEventListener('input', () => {
+  if (!qrInfo || !qrInfo.pathBits) return; // guard: no QR locked
   scrubPlaying = false;
   scrubPos = Number(scrubSlider.value);
   updateScrubUI();
@@ -1072,6 +1162,16 @@ scrubPlay.addEventListener('click', () => {
   if (scrubPlaying && readPathOn) startAnimLoop();
 });
 window.addEventListener('resize', syncOverlaySize);
+
+// Release the camera when the tab is hidden; restart on return (live mode only).
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    if (mode === 'live') stopCamera();
+  } else if (document.visibilityState === 'visible') {
+    if (mode === 'live' && !stream) startCamera();
+  }
+});
+window.addEventListener('pagehide', () => { if (mode === 'live') stopCamera(); });
 
 // Init
 if (!jsQR) {

@@ -31,36 +31,54 @@ export function moduleCorners(loc, size, row, col) {
   ];
 }
 
-// Sample the bit at every module by reading the center pixel from imageData.
-// Returns size×size boolean array (true = dark/1).
-export function sampleBitMatrix(imageData, loc, size) {
+// Flat Uint8Array(size*size) where bits[r*size+c] = 1 if module is dark.
+// Avoids the 2D-of-Array allocation per detection. Has a thin wrapper so
+// existing 2D-access call sites (bm[r][c]) still work via a Proxy on demand.
+export function sampleBitMatrix(imageData, loc, size, reuse) {
   const { data, width, height } = imageData;
-  const bits = Array.from({ length: size }, () => new Array(size).fill(false));
-  // Determine a threshold: average a small grid of samples.
+  const bits = (reuse && reuse.length === size * size) ? reuse : new Uint8Array(size * size);
+  // Inline bilinear projection — no per-call object allocations.
+  const tl = loc.topLeftCorner, tr = loc.topRightCorner;
+  const bl = loc.bottomLeftCorner, br = loc.bottomRightCorner;
+  const inv = 1 / size;
+
+  // Threshold pass: every-other module sample
   let sum = 0, count = 0;
   for (let i = 0; i < size; i += 2) {
+    const vF = (i + 0.5) * inv;
+    const omv = 1 - vF;
     for (let j = 0; j < size; j += 2) {
-      const p = moduleToPixel(loc, size, i, j);
-      const x = Math.max(0, Math.min(width - 1, Math.round(p.x)));
-      const y = Math.max(0, Math.min(height - 1, Math.round(p.y)));
-      const idx = (y * width + x) * 4;
-      const lum = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
-      sum += lum;
+      const uF = (j + 0.5) * inv;
+      const omu = 1 - uF;
+      let x = omu * omv * tl.x + uF * omv * tr.x + omu * vF * bl.x + uF * vF * br.x;
+      let y = omu * omv * tl.y + uF * omv * tr.y + omu * vF * bl.y + uF * vF * br.y;
+      x = x < 0 ? 0 : x > width - 1 ? width - 1 : x;
+      y = y < 0 ? 0 : y > height - 1 ? height - 1 : y;
+      const idx = ((y | 0) * width + (x | 0)) * 4;
+      sum += 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
       count++;
     }
   }
   const threshold = sum / count;
+
+  // Full pass
   for (let i = 0; i < size; i++) {
+    const vF = (i + 0.5) * inv;
+    const omv = 1 - vF;
+    const base = i * size;
     for (let j = 0; j < size; j++) {
-      const p = moduleToPixel(loc, size, i, j);
-      const x = Math.max(0, Math.min(width - 1, Math.round(p.x)));
-      const y = Math.max(0, Math.min(height - 1, Math.round(p.y)));
-      const idx = (y * width + x) * 4;
+      const uF = (j + 0.5) * inv;
+      const omu = 1 - uF;
+      let x = omu * omv * tl.x + uF * omv * tr.x + omu * vF * bl.x + uF * vF * br.x;
+      let y = omu * omv * tl.y + uF * omv * tr.y + omu * vF * bl.y + uF * vF * br.y;
+      x = x < 0 ? 0 : x > width - 1 ? width - 1 : x;
+      y = y < 0 ? 0 : y > height - 1 ? height - 1 : y;
+      const idx = ((y | 0) * width + (x | 0)) * 4;
       const lum = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
-      bits[i][j] = lum < threshold;
+      bits[base + j] = lum < threshold ? 1 : 0;
     }
   }
-  return bits;
+  return { bits, size };
 }
 
 // --- Format info BCH(15,5) decoding ---
@@ -80,8 +98,9 @@ const FORMAT_INFO_TABLE = [
 const EC_LEVEL_NAMES = ['M', 'L', 'H', 'Q']; // indexed by 2-bit raw value
 const EC_LEVEL_RECOVERY = { L: '~7%', M: '~15%', Q: '~25%', H: '~30%' };
 
-// Read 15 bits of format info copy 1 from a bitMatrix (true=1).
-// Order: (8,0..5), (8,7), (8,8), (7,8), (5..0, 8)
+// bm here is { bits: Uint8Array, size } from sampleBitMatrix.
+function bmGet(bm, r, c) { return bm.bits[r * bm.size + c]; }
+
 function readFormatCopy1(bm) {
   let v = 0;
   const positions = [
@@ -89,16 +108,18 @@ function readFormatCopy1(bm) {
     [8, 7], [8, 8], [7, 8],
     [5, 8], [4, 8], [3, 8], [2, 8], [1, 8], [0, 8],
   ];
-  for (const [r, c] of positions) v = (v << 1) | (bm[r][c] ? 1 : 0);
+  for (const [r, c] of positions) v = (v << 1) | (bmGet(bm, r, c) ? 1 : 0);
   return v;
 }
 
 function readFormatCopy2(bm, size) {
+  // Per ISO/IEC 18004 §7.9: copy 2 = (size-1..size-7, 8) then (8, size-1..size-8).
+  // Horizontal strip read right-to-left so bit significance lines up with copy 1.
   let v = 0;
   const positions = [];
   for (let r = size - 1; r >= size - 7; r--) positions.push([r, 8]);
-  for (let c = size - 8; c <= size - 1; c++) positions.push([8, c]);
-  for (const [r, c] of positions) v = (v << 1) | (bm[r][c] ? 1 : 0);
+  for (let c = size - 1; c >= size - 8; c--) positions.push([8, c]);
+  for (const [r, c] of positions) v = (v << 1) | (bmGet(bm, r, c) ? 1 : 0);
   return v;
 }
 

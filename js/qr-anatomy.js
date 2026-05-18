@@ -222,7 +222,14 @@ export function groupRegions(grid) {
         cells.push([rr, cc]);
         stack.push([rr + 1, cc], [rr - 1, cc], [rr, cc + 1], [rr, cc - 1]);
       }
-      regions.push({ ...cell, cells });
+      // Precompute bounding rows/cols once at construction so per-frame draw
+       // doesn't have to .map() + spread Math.min/max over potentially-many cells.
+      let r0 = cells[0][0], r1 = r0, c0 = cells[0][1], c1 = c0;
+      for (const [rr, cc] of cells) {
+        if (rr < r0) r0 = rr; else if (rr > r1) r1 = rr;
+        if (cc < c0) c0 = cc; else if (cc > c1) c1 = cc;
+      }
+      regions.push({ ...cell, cells, bounds: { r0, r1: r1 + 1, c0, c1: c1 + 1 } });
     }
   }
   return regions;
