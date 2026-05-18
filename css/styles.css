@@ -172,15 +172,80 @@ main {
 .spacer { flex: 1; }
 .link { background: none; border: none; color: var(--accent-2); text-decoration: underline; cursor: pointer; font: inherit; }
 
-#summary {
-  background: var(--bg-elev);
+/* --- Summary drawer (overlays bottom of camera viewport) --- */
+.summary-drawer {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  z-index: 7;
+  background: linear-gradient(180deg, rgba(11,16,32,0) 0%, rgba(11,16,32,0.78) 18%, rgba(19,26,46,0.95) 100%);
+  backdrop-filter: blur(8px);
   border-top: 1px solid var(--border);
-  padding: 14px 14px 12px;
-  display: grid;
+  border-radius: 16px 16px 0 0;
+  padding: 6px 12px 10px;
+  max-height: 60%;
+  display: flex;
+  flex-direction: column;
+  transition: max-height 0.25s ease;
+}
+.summary-drawer[hidden] { display: none; }
+.summary-handle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  padding: 4px 4px 6px;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  width: 100%;
+}
+.summary-handle::before {
+  content: "";
+  width: 38px; height: 4px;
+  background: rgba(255,255,255,0.25);
+  border-radius: 4px;
+  margin: 0 auto;
+  position: absolute;
+  top: 6px; left: 50%; transform: translateX(-50%);
+}
+.summary-peek {
+  flex: 1;
+  font-size: 13.5px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 6px;
+}
+.summary-peek .peek-kind {
+  color: var(--accent);
+  font-weight: 700;
+  margin-right: 6px;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+.summary-chevron {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 700;
+  transform: rotate(180deg);
+  transition: transform 0.2s ease;
+  padding: 0 6px;
+}
+.summary-drawer[aria-expanded="true"] .summary-chevron { transform: rotate(0deg); }
+.summary-rows {
+  display: none;
+  overflow-y: auto;
+  padding: 6px 2px 4px;
   gap: 10px;
   font-size: 14px;
 }
-#summary[hidden] { display: none; }
+.summary-drawer[aria-expanded="true"] .summary-rows { display: grid; }
+.summary-drawer[aria-expanded="true"] { max-height: 75%; }
 .summary-row {
   display: grid;
   grid-template-columns: 110px 1fr;

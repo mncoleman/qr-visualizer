@@ -27,6 +27,9 @@ const sheetClose = document.getElementById('sheet-close');
 const resumeBtn = document.getElementById('resume');
 const fileInput = document.getElementById('file-input');
 const summary = document.getElementById('summary');
+const summaryRows = document.getElementById('summary-rows');
+const summaryToggle = document.getElementById('summary-toggle');
+const summaryPeek = summary?.querySelector('.summary-peek');
 const legendBtn = document.getElementById('legend-btn');
 const legend = document.getElementById('legend');
 const readPathBtn = document.getElementById('readpath-btn');
@@ -476,7 +479,14 @@ function renderSummary() {
   const tip = (label, body) =>
     `<div class="summary-label">${label}<span class="tip"><button type="button" class="tip-btn" aria-label="What is this?" data-tip-toggle>i</button><span class="tip-content">${body}</span></span></div>`;
 
-  summary.innerHTML = `
+  // Collapsed-state peek line (just the translated value)
+  let peekDetail = '';
+  if (interp.kind === 'url') peekDetail = interp.url;
+  else if (interp.detail) peekDetail = interp.detail;
+  else peekDetail = qrInfo.data || '(empty)';
+  summaryPeek.innerHTML = `<span class="peek-kind">${escape(interp.label)}</span>${escape(peekDetail)}`;
+
+  summaryRows.innerHTML = `
     <div class="summary-row">
       ${tip('Translated', 'A friendlier interpretation of the raw payload. We auto-detect URLs, Wi-Fi configs, email links, phone numbers, vCards, and calendar events.')}
       <div class="summary-val">
@@ -509,7 +519,7 @@ function renderSummary() {
     </div>` : ''}
   `;
   // Wire tooltip toggles
-  summary.querySelectorAll('[data-tip-toggle]').forEach((btn) => {
+  summaryRows.querySelectorAll('[data-tip-toggle]').forEach((btn) => {
     btn.addEventListener('click', (ev) => {
       ev.stopPropagation();
       const wrap = btn.parentElement;
@@ -594,6 +604,10 @@ document.addEventListener('click', (e) => {
   if (!e.target.closest('.tip')) {
     document.querySelectorAll('.tip.open').forEach((t) => t.classList.remove('open'));
   }
+});
+summaryToggle.addEventListener('click', () => {
+  const expanded = summary.getAttribute('aria-expanded') === 'true';
+  summary.setAttribute('aria-expanded', String(!expanded));
 });
 readPathBtn.addEventListener('click', () => {
   readPathOn = !readPathOn;
