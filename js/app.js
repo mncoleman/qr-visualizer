@@ -119,12 +119,23 @@ function stopCamera() {
   scanning = false;
 }
 
-// Match overlay canvas dimensions to the video's intrinsic frame so coords line up.
+// Crispness factor for the overlay canvas backing store. Drawing coords stay in
+// video-frame space; ctx.scale(renderScale) blows them up to the high-DPI canvas.
+// Capped because canvas memory grows quadratically: max 3 → up to ~8 megapixels.
+const renderScale = Math.min(3, Math.max(1, window.devicePixelRatio || 1));
+
+// Match overlay canvas dimensions to the video's intrinsic frame × renderScale
+// so the overlay looks sharp at digital-zoom levels too.
 function syncOverlaySize() {
   if (mode !== 'live') return;
-  if (video.videoWidth > 0 && (overlayCanvas.width !== video.videoWidth || overlayCanvas.height !== video.videoHeight)) {
-    overlayCanvas.width = video.videoWidth;
-    overlayCanvas.height = video.videoHeight;
+  if (video.videoWidth > 0) {
+    const targetW = Math.round(video.videoWidth * renderScale);
+    const targetH = Math.round(video.videoHeight * renderScale);
+    if (overlayCanvas.width !== targetW || overlayCanvas.height !== targetH) {
+      overlayCanvas.width = targetW;
+      overlayCanvas.height = targetH;
+      cornersForLocation = null; // force a redraw using the new backing store
+    }
   }
 }
 
@@ -208,14 +219,19 @@ function freezeFrame() {
   if (mode !== 'live' || isFrozen) return;
   isFrozen = true;
   scanning = false;
-  // Snapshot the current video frame to captureCanvas
-  const w = video.videoWidth || overlayCanvas.width;
-  const h = video.videoHeight || overlayCanvas.height;
+  // Snapshot the current video frame to captureCanvas. Capture stays at video
+  // resolution — there's no benefit to scaling up an already-rasterized image.
+  const w = video.videoWidth;
+  const h = video.videoHeight;
   captureCanvas.width = w;
   captureCanvas.height = h;
   const ctx = captureCanvas.getContext('2d');
   ctx.drawImage(video, 0, 0, w, h);
   frozenSnapshot = ctx.getImageData(0, 0, w, h);
+  // Overlay gets the high-DPI backing store; it sits on top of the capture.
+  overlayCanvas.width = Math.round(w * renderScale);
+  overlayCanvas.height = Math.round(h * renderScale);
+  cornersForLocation = null;
   video.style.display = 'none';
   captureCanvas.style.display = 'block';
   // Run one decode on the snapshot so qrInfo reflects this exact frame
@@ -483,6 +499,7 @@ function scanLoop(ts) {
 
 function clearOverlay() {
   const ctx = overlayCanvas.getContext('2d');
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
 }
 
@@ -560,7 +577,11 @@ function drawOverlay() {
   if (!qrInfo) return;
   ensureCornersBuf();
   const ctx = overlayCanvas.getContext('2d');
+  // Reset transform to identity, clear full backing store, then re-scale so
+  // subsequent drawing in video-frame coordinates lands on the high-DPI canvas.
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+  ctx.scale(renderScale, renderScale);
 
   if (readPathOn) drawReadPath(ctx);
   else drawRegions(ctx);
@@ -805,7 +826,9 @@ function clientToCanvas(clientX, clientY, rect) {
   const px = (clientX - rect.left - offsetX) / scale;
   const py = (clientY - rect.top - offsetY) / scale;
   if (px < 0 || py < 0 || px >= cw || py >= ch) return null;
-  return { x: px, y: py };
+  // Canvas is rendered at high-DPI (renderScale × video size); hit-test corners
+  // are in video-frame coords, so map back into that space.
+  return { x: px / renderScale, y: py / renderScale };
 }
 
 // Reused scratch quad for hit-test — avoids 4-object allocation per cell test.
@@ -1041,8 +1064,9 @@ async function handleFile(file) {
   mode = 'still';
   captureCanvas.width = usedImg.width;
   captureCanvas.height = usedImg.height;
-  overlayCanvas.width = usedImg.width;
-  overlayCanvas.height = usedImg.height;
+  overlayCanvas.width = Math.round(usedImg.width * renderScale);
+  overlayCanvas.height = Math.round(usedImg.height * renderScale);
+  cornersForLocation = null;
   captureCanvas.getContext('2d').putImageData(usedImg, 0, 0);
   video.style.display = 'none';
   captureCanvas.style.display = 'block';
