@@ -1,6 +1,7 @@
 // QR Visualizer — live camera QR scanner with anatomy overlay rendered every frame.
 
 import { buildModuleMap, groupRegions, computeReadPath, COLORS, T } from './qr-anatomy.js';
+import { extractPathBits, parseBitstream } from './bitstream.js';
 import {
   moduleCorners,
   sampleBitMatrix,
@@ -36,9 +37,13 @@ const readPathBtn = document.getElementById('readpath-btn');
 const freezeBtn = document.getElementById('freeze-btn');
 const infoBtn = document.getElementById('info-btn');
 const zoomControls = document.getElementById('zoom-controls');
-const zoomInBtn = document.getElementById('zoom-in');
-const zoomOutBtn = document.getElementById('zoom-out');
+const zoomSlider = document.getElementById('zoom-slider');
 const zoomReadout = document.getElementById('zoom-readout');
+const scrubber = document.getElementById('scrubber');
+const scrubSlider = document.getElementById('scrub-slider');
+const scrubPlay = document.getElementById('scrub-play');
+const scrubReadout = document.getElementById('scrub-readout');
+const scrubInfo = document.getElementById('scrub-info');
 
 // --- State ---
 let stream = null;
@@ -59,6 +64,10 @@ let zoomCaps = null;          // { min, max, step } from track capabilities, or 
 let zoomValue = 1;
 let infoVisible = false;
 let animTimer = null;         // rAF id for read-path animation
+let scrubPos = 0;             // current bit position in the read-path (0..pathBits.length-1)
+let scrubPlaying = true;
+let scrubLastTs = 0;
+const SCRUB_BITS_PER_SEC = 60; // how fast the cursor advances when playing
 
 // "Recently saw a QR" hysteresis — keeps overlay & summary visible across brief misses.
 const TRACK_TIMEOUT_MS = 600;
@@ -159,6 +168,12 @@ function setupZoom() {
     if (zoomCaps.max > zoomCaps.min) {
       zoomValue = Math.max(zoomCaps.min, Math.min(zoomCaps.max, 1));
       zoomControls.hidden = false;
+      if (zoomSlider) {
+        zoomSlider.min = String(zoomCaps.min);
+        zoomSlider.max = String(zoomCaps.max);
+        zoomSlider.step = String(zoomCaps.step || 0.1);
+        zoomSlider.value = String(zoomValue);
+      }
       updateZoomReadout();
       return;
     }
@@ -179,6 +194,7 @@ async function applyZoom(target) {
     await track.applyConstraints({ advanced: [{ zoom: v }] });
     zoomValue = v;
     updateZoomReadout();
+    if (zoomSlider) zoomSlider.value = String(v);
   } catch (e) {
     console.warn('Zoom constraint rejected', e);
   }
@@ -209,8 +225,11 @@ function freezeFrame() {
     qrInfo = { version, size, location: r.location, data: r.data, chunks: r.chunks, formatInfo };
     regions = grouped;
     readPath = getReadPath(version);
+    ensureBitstream(qrInfo, frozenSnapshot);
     document.body.classList.add('tracking');
     renderSummary();
+    showScrubberIfReady();
+    updateScrubUI();
   }
   drawOverlay();
   freezeBtn.setAttribute('aria-pressed', 'true');
@@ -244,8 +263,16 @@ function setInfoVisible(v) {
 // --- Read path animation loop ---
 function startAnimLoop() {
   if (animTimer) return;
-  const tick = () => {
+  scrubLastTs = performance.now();
+  const tick = (ts) => {
     if (!readPathOn || !qrInfo) { animTimer = null; return; }
+    if (scrubPlaying && qrInfo.pathBits && qrInfo.pathBits.length > 0) {
+      const dt = (ts - scrubLastTs) / 1000;
+      scrubPos += dt * SCRUB_BITS_PER_SEC;
+      if (scrubPos >= qrInfo.pathBits.length - 1) scrubPos = 0; // loop
+      updateScrubUI();
+    }
+    scrubLastTs = ts;
     drawOverlay();
     animTimer = requestAnimationFrame(tick);
   };
@@ -254,6 +281,129 @@ function startAnimLoop() {
 function stopAnimLoop() {
   if (animTimer) cancelAnimationFrame(animTimer);
   animTimer = null;
+}
+
+// Compute the un-masked bit stream + parsed semantic chunks for the current QR.
+// Called whenever qrInfo gets a fresh detection. Cached in qrInfo.
+function ensureBitstream(qi, imageData) {
+  if (qi.pathBits) return;
+  if (!qi.formatInfo) return;
+  try {
+    const bitMatrix = sampleBitMatrix(imageData, qi.location, qi.size);
+    const pathArr = getReadPath(qi.version);
+    const bits = extractPathBits(bitMatrix, pathArr, qi.formatInfo.mask);
+    const parsed = parseBitstream(bits, qi.version);
+    qi.pathBits = bits;
+    qi.parsed = parsed;
+  } catch (e) {
+    console.warn('Bitstream parse failed', e);
+  }
+}
+
+function updateScrubUI() {
+  if (!qrInfo || !qrInfo.pathBits) return;
+  const total = qrInfo.pathBits.length;
+  const idx = Math.max(0, Math.min(total - 1, Math.floor(scrubPos)));
+  scrubSlider.max = String(total - 1);
+  if (document.activeElement !== scrubSlider) scrubSlider.value = String(idx);
+
+  const byte = Math.floor(idx / 8);
+  const bit = idx % 8;
+  const totalBytes = Math.floor(total / 8);
+  scrubReadout.textContent = `bit ${idx} · byte ${byte}/${totalBytes - 1}`;
+  scrubPlay.textContent = scrubPlaying ? '❚❚' : '▶';
+
+  renderScrubInfo(idx);
+}
+
+function renderScrubInfo(idx) {
+  if (!qrInfo?.parsed) { scrubInfo.innerHTML = ''; return; }
+  const { perBit, chunks } = qrInfo.parsed;
+  const info = perBit[idx];
+  if (!info) { scrubInfo.innerHTML = ''; return; }
+
+  const byteIdx = info.byteIndex;
+  // Build the 8 bits of this byte for display
+  const byteStartBit = byteIdx * 8;
+  const bitCells = [];
+  for (let i = 0; i < 8; i++) {
+    const bi = byteStartBit + i;
+    if (bi >= qrInfo.pathBits.length) break;
+    const on = qrInfo.pathBits[bi];
+    const isNow = bi === idx;
+    bitCells.push(`<span class="bit ${on ? 'on' : ''} ${isNow ? 'now' : ''}">${on}</span>`);
+  }
+  // Decode this byte to a hex + char (where applicable)
+  let byteHex = '—', byteInterp = '—';
+  if (byteStartBit + 8 <= qrInfo.pathBits.length) {
+    let v = 0;
+    for (let i = 0; i < 8; i++) v = (v << 1) | qrInfo.pathBits[byteStartBit + i];
+    byteHex = '0x' + v.toString(16).padStart(2, '0').toUpperCase();
+    if (info.role === 'content' && info.chunkIndex != null) {
+      const chunk = chunks[info.chunkIndex];
+      if (chunk?.mode === 0b0100) {
+        // byte mode → ASCII / control
+        if (v >= 32 && v < 127) byteInterp = `'${String.fromCharCode(v)}'`;
+        else byteInterp = `(byte ${v})`;
+      }
+    }
+  }
+
+  // Role badge + section name
+  let sectionName, sectionClass;
+  switch (info.role) {
+    case 'mode':        sectionName = 'Encoding mode'; sectionClass = 'mode'; break;
+    case 'length':      sectionName = 'Length field'; sectionClass = 'length'; break;
+    case 'content':     sectionName = 'Content'; sectionClass = 'content'; break;
+    case 'terminator':  sectionName = 'Terminator'; sectionClass = 'terminator'; break;
+    case 'ecc':         sectionName = 'Error correction'; sectionClass = 'ecc'; break;
+    default:            sectionName = info.role || 'data'; sectionClass = 'content';
+  }
+
+  // Mode-specific explanation when in 'mode' section
+  let modeExtra = '';
+  if (info.role === 'mode' && info.chunkIndex != null) {
+    const chunk = chunks[info.chunkIndex];
+    modeExtra = `<div class="hint" style="color:var(--muted); font-size:12px; margin-top:2px;">Mode = <code>${(chunk?.mode ?? 0).toString(2).padStart(4, '0')}</code> → ${chunk?.modeName || '?'}</div>`;
+  }
+  // Length explanation
+  let lengthExtra = '';
+  if (info.role === 'length' && info.chunkIndex != null) {
+    const chunk = chunks[info.chunkIndex];
+    lengthExtra = `<div class="hint" style="color:var(--muted); font-size:12px; margin-top:2px;">This chunk encodes ${chunk?.length ?? '?'} characters.</div>`;
+  }
+  // Content excerpt
+  let contentExtra = '';
+  if (info.role === 'content' && info.chunkIndex != null) {
+    const chunk = chunks[info.chunkIndex];
+    if (chunk?.text) {
+      const safe = chunk.text.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+      contentExtra = `<div class="hint" style="color:var(--muted); font-size:12px; margin-top:2px;">Decoded chunk: <span class="mono">${safe}</span></div>`;
+    }
+  }
+  let eccExtra = '';
+  if (info.role === 'ecc') {
+    eccExtra = `<div class="hint" style="color:var(--muted); font-size:12px; margin-top:2px;">Reed-Solomon parity — not your content, but lets the scanner repair damage.</div>`;
+  }
+
+  scrubInfo.innerHTML = `
+    <div class="si-row">
+      <div class="si-label">Section</div>
+      <div class="si-val"><span class="section-pill ${sectionClass}">${sectionName}</span>${modeExtra}${lengthExtra}${contentExtra}${eccExtra}</div>
+    </div>
+    <div class="si-row">
+      <div class="si-label">Byte ${byteIdx}</div>
+      <div class="si-val scrub-bits">${bitCells.join('')}</div>
+    </div>
+    <div class="si-row">
+      <div class="si-label">Value</div>
+      <div class="si-val mono">${byteHex} ${byteInterp !== '—' ? '· ' + byteInterp : ''}</div>
+    </div>
+  `;
+}
+
+function showScrubberIfReady() {
+  scrubber.hidden = !(readPathOn && qrInfo && qrInfo.pathBits);
 }
 
 function scanLoop(ts) {
@@ -293,10 +443,13 @@ function scanLoop(ts) {
       };
       regions = grouped;
       readPath = getReadPath(version);
+      ensureBitstream(qrInfo, img);
       lastSeenAt = ts || performance.now();
       statusEl.textContent = `Tracking — version ${version} (${size}×${size})  ·  tap a section`;
       document.body.classList.add('tracking');
       renderSummary();
+      showScrubberIfReady();
+      updateScrubUI();
       drawOverlay();
       // Keep the open sheet content synced to the latest detection.
       if (openRegionType) refreshOpenSheet();
@@ -308,6 +461,7 @@ function scanLoop(ts) {
         regions = [];
         clearOverlay();
         summary.hidden = true;
+        scrubber.hidden = true;
         statusEl.textContent = 'Point camera at a QR code';
         document.body.classList.remove('tracking');
       }
@@ -472,10 +626,8 @@ function drawReadPath(ctx) {
     ctx.fill();
   }
 
-  // Pass 5: animated cursor walks the path
-  // Speed: traverse the whole path every ~6 seconds.
-  const t = (performance.now() / 6000) % 1; // 0..1
-  const fpos = t * (centers.length - 1);
+  // Pass 5: cursor position — driven by the scrubber (paused or animating)
+  const fpos = Math.max(0, Math.min(centers.length - 1, scrubPos));
   const idx = Math.floor(fpos);
   const frac = fpos - idx;
   const a = centers[idx];
@@ -724,15 +876,18 @@ function renderSummary() {
       <div class="summary-val">${f.mask} — <span class="mono">${escape(MASK_FORMULAS[f.mask])}</span></div>
     </div>` : ''}
   `;
-  // Wire tooltip toggles
+  // Wire tooltip toggles (use pointerup for reliable mobile tap detection)
   summaryRows.querySelectorAll('[data-tip-toggle]').forEach((btn) => {
-    btn.addEventListener('click', (ev) => {
+    const toggle = (ev) => {
+      ev.preventDefault();
       ev.stopPropagation();
       const wrap = btn.parentElement;
       const wasOpen = wrap.classList.contains('open');
       summary.querySelectorAll('.tip.open').forEach((t) => t.classList.remove('open'));
       if (!wasOpen) wrap.classList.add('open');
-    });
+    };
+    btn.addEventListener('pointerup', toggle);
+    btn.addEventListener('click', (e) => e.preventDefault());
   });
   summary.hidden = false;
 }
@@ -830,8 +985,11 @@ async function handleFile(file) {
   qrInfo = { version, size, location: result.location, data: result.data, chunks: result.chunks, formatInfo };
   regions = grouped;
   readPath = getReadPath(version);
+  ensureBitstream(qrInfo, usedImg);
   statusEl.textContent = `Loaded image — version ${version} (${size}×${size})  ·  tap a section`;
   renderSummary();
+  showScrubberIfReady();
+  updateScrubUI();
   drawOverlay();
   resumeBtn.hidden = false;
 }
@@ -893,8 +1051,16 @@ readPathBtn.addEventListener('click', () => {
   readPathOn = !readPathOn;
   readPathBtn.setAttribute('aria-pressed', String(readPathOn));
   document.body.classList.toggle('readpath-on', readPathOn);
-  if (readPathOn) startAnimLoop();
-  else stopAnimLoop();
+  if (readPathOn) {
+    scrubPos = 0;
+    scrubPlaying = true;
+    startAnimLoop();
+    showScrubberIfReady();
+    updateScrubUI();
+  } else {
+    stopAnimLoop();
+    scrubber.hidden = true;
+  }
   if (qrInfo) drawOverlay();
 });
 freezeBtn.addEventListener('click', () => {
@@ -902,8 +1068,22 @@ freezeBtn.addEventListener('click', () => {
   if (isFrozen) resumeFrame(); else freezeFrame();
 });
 infoBtn.addEventListener('click', () => setInfoVisible(!infoVisible));
-zoomInBtn.addEventListener('click', () => applyZoom(zoomValue + (zoomCaps?.step || 0.5)));
-zoomOutBtn.addEventListener('click', () => applyZoom(zoomValue - (zoomCaps?.step || 0.5)));
+if (zoomSlider) {
+  zoomSlider.addEventListener('input', () => applyZoom(Number(zoomSlider.value)));
+}
+
+scrubSlider.addEventListener('input', () => {
+  scrubPlaying = false;
+  scrubPos = Number(scrubSlider.value);
+  updateScrubUI();
+  drawOverlay();
+});
+scrubPlay.addEventListener('click', () => {
+  scrubPlaying = !scrubPlaying;
+  scrubLastTs = performance.now();
+  updateScrubUI();
+  if (scrubPlaying && readPathOn) startAnimLoop();
+});
 window.addEventListener('resize', syncOverlaySize);
 
 // Init

@@ -45,9 +45,10 @@
       <div class="reticle" aria-hidden="true"></div>
       <div id="status">Loading camera…</div>
       <div id="zoom-controls" hidden>
-        <button id="zoom-out" type="button" class="zoom-btn" aria-label="Zoom out">−</button>
-        <span id="zoom-readout">1×</span>
-        <button id="zoom-in" type="button" class="zoom-btn" aria-label="Zoom in">+</button>
+        <span class="zoom-label">−</span>
+        <input id="zoom-slider" type="range" min="1" max="5" step="0.1" value="1" aria-label="Camera zoom" />
+        <span class="zoom-label">+</span>
+        <span id="zoom-readout">1.0×</span>
       </div>
       <button id="legend-btn" type="button" aria-label="Toggle color legend" aria-expanded="false">Legend</button>
       <div id="legend" role="region" aria-label="Color legend">
@@ -61,6 +62,14 @@
         <div class="legend-item"><span class="legend-swatch" style="background:#0ea5e9"></span>Dark module</div>
         <div class="legend-item"><span class="legend-swatch" style="background:#94a3b8"></span>Data + ECC</div>
       </div>
+      <section id="scrubber" class="scrubber" hidden>
+        <div class="scrubber-row">
+          <button id="scrub-play" type="button" class="scrub-btn" aria-label="Play / pause read animation">▶</button>
+          <input id="scrub-slider" type="range" min="0" max="100" value="0" step="1" aria-label="Read-path position" />
+          <span id="scrub-readout" class="scrub-readout">byte 0 / 0</span>
+        </div>
+        <div id="scrub-info" class="scrub-info"></div>
+      </section>
       <section id="summary" class="summary-drawer" hidden aria-expanded="false">
         <button id="summary-toggle" type="button" class="summary-handle" aria-label="Expand details">
           <span class="summary-peek"></span>
