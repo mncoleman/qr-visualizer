@@ -539,44 +539,98 @@ function renderSummary() {
 }
 
 // --- File upload (still-image mode) ---
+
+// Resample imageData onto a new canvas at the given max dimension.
+function rescaleImageData(imgData, maxDim) {
+  const w = imgData.width, h = imgData.height;
+  const maxSide = Math.max(w, h);
+  if (maxSide <= maxDim) return imgData;
+  const scale = maxDim / maxSide;
+  const nw = Math.round(w * scale);
+  const nh = Math.round(h * scale);
+  const src = document.createElement('canvas');
+  src.width = w; src.height = h;
+  src.getContext('2d').putImageData(imgData, 0, 0);
+  const dst = document.createElement('canvas');
+  dst.width = nw; dst.height = nh;
+  const ctx = dst.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(src, 0, 0, nw, nh);
+  return ctx.getImageData(0, 0, nw, nh);
+}
+
+// Try multiple strategies — jsQR is sensitive to resolution and inversion order.
+// Returns { result, imageData } at whatever resolution succeeded, or null.
+function decodeImageDataWithRetries(imgData) {
+  const sizes = [];
+  const maxSide = Math.max(imgData.width, imgData.height);
+  sizes.push(imgData);
+  if (maxSide > 1600) sizes.push(rescaleImageData(imgData, 1600));
+  if (maxSide > 1024) sizes.push(rescaleImageData(imgData, 1024));
+  if (maxSide > 640)  sizes.push(rescaleImageData(imgData, 640));
+  const inversions = ['attemptBoth', 'onlyInvert', 'invertFirst', 'dontInvert'];
+  for (const data of sizes) {
+    for (const inv of inversions) {
+      const r = jsQR(data.data, data.width, data.height, { inversionAttempts: inv });
+      if (r && isPlausibleDetection(r, data.width, data.height)) {
+        return { result: r, imageData: data };
+      }
+    }
+  }
+  return null;
+}
+
 async function handleFile(file) {
+  statusEl.textContent = 'Reading image…';
   const img = new Image();
   const url = URL.createObjectURL(file);
-  await new Promise((res, rej) => {
-    img.onload = res;
-    img.onerror = rej;
-    img.src = url;
-  });
+  try {
+    await new Promise((res, rej) => {
+      img.onload = res;
+      img.onerror = rej;
+      img.src = url;
+    });
+  } catch {
+    URL.revokeObjectURL(url);
+    statusEl.textContent = "Couldn't read that file.";
+    return;
+  }
   const tmp = document.createElement('canvas');
   tmp.width = img.naturalWidth;
   tmp.height = img.naturalHeight;
-  const ctx = tmp.getContext('2d');
-  ctx.drawImage(img, 0, 0);
-  const imgData = ctx.getImageData(0, 0, tmp.width, tmp.height);
-  const result = jsQR(imgData.data, tmp.width, tmp.height, { inversionAttempts: 'attemptBoth' });
+  tmp.getContext('2d').drawImage(img, 0, 0);
   URL.revokeObjectURL(url);
-  if (!result || !isPlausibleDetection(result, tmp.width, tmp.height)) {
-    statusEl.textContent = 'No QR code found in that image.';
+  const fullImgData = tmp.getContext('2d').getImageData(0, 0, tmp.width, tmp.height);
+
+  statusEl.textContent = 'Scanning image…';
+  const decoded = decodeImageDataWithRetries(fullImgData);
+  if (!decoded) {
+    statusEl.textContent = "No QR code found in that image. Try a closer / sharper photo.";
     return;
   }
-  // Switch to still mode: stop camera, show captureCanvas with image, draw overlay once
+  const { result, imageData: usedImg } = decoded;
+
+  // Switch to still mode using whichever resolution actually decoded
   stopCamera();
   mode = 'still';
-  captureCanvas.width = tmp.width;
-  captureCanvas.height = tmp.height;
-  overlayCanvas.width = tmp.width;
-  overlayCanvas.height = tmp.height;
-  captureCanvas.getContext('2d').putImageData(imgData, 0, 0);
+  captureCanvas.width = usedImg.width;
+  captureCanvas.height = usedImg.height;
+  overlayCanvas.width = usedImg.width;
+  overlayCanvas.height = usedImg.height;
+  captureCanvas.getContext('2d').putImageData(usedImg, 0, 0);
   video.style.display = 'none';
   captureCanvas.style.display = 'block';
+  document.body.classList.add('tracking');
 
   const version = result.version || 1;
   const { size, regions: grouped } = getRegionsForVersion(version);
   let formatInfo = null;
-  try { formatInfo = decodeFormatInfo(sampleBitMatrix(imgData, result.location, size), size); } catch {}
+  try { formatInfo = decodeFormatInfo(sampleBitMatrix(usedImg, result.location, size), size); } catch {}
 
   qrInfo = { version, size, location: result.location, data: result.data, chunks: result.chunks, formatInfo };
   regions = grouped;
+  readPath = getReadPath(version);
   statusEl.textContent = `Loaded image — version ${version} (${size}×${size})  ·  tap a section`;
   renderSummary();
   drawOverlay();
@@ -617,7 +671,15 @@ fileInput.addEventListener('change', (e) => {
   const f = e.target.files?.[0];
   if (f) handleFile(f);
 });
-legendBtn.addEventListener('click', () => legend.classList.toggle('open'));
+function setLegendOpen(open) {
+  legend.classList.toggle('open', open);
+  legendBtn.setAttribute('aria-expanded', String(open));
+  legendBtn.textContent = open ? 'Close legend' : 'Legend';
+}
+legendBtn.addEventListener('click', () => {
+  setLegendOpen(!legend.classList.contains('open'));
+});
+document.getElementById('legend-close')?.addEventListener('click', () => setLegendOpen(false));
 document.addEventListener('click', (e) => {
   // close tooltips when clicking outside
   if (!e.target.closest('.tip')) {

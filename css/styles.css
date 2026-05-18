@@ -343,19 +343,34 @@ main {
 #legend {
   position: absolute;
   right: 12px;
-  bottom: 12px;
-  background: rgba(11, 16, 32, 0.92);
+  bottom: 56px;
+  background: rgba(11, 16, 32, 0.94);
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 8px 10px;
+  padding: 24px 12px 12px;
   display: none;
   flex-direction: column;
-  gap: 5px;
-  font-size: 12px;
-  z-index: 6;
-  max-width: 240px;
+  gap: 6px;
+  font-size: 12.5px;
+  z-index: 8;
+  max-width: 260px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.4);
 }
 #legend.open { display: flex; }
+#legend-close {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  padding: 4px 8px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+#legend-close:hover { color: var(--text); background: var(--surface); }
 .legend-item { display: flex; align-items: center; gap: 8px; }
 .legend-swatch { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; }
 #legend-btn {
@@ -371,8 +386,11 @@ main {
   font-size: 12px;
   cursor: pointer;
 }
-#legend.open ~ #legend-btn,
-#legend.open + #legend-btn { display: none; }
+#legend-btn[aria-expanded="true"] {
+  background: var(--accent);
+  color: #062e21;
+  border-color: transparent;
+}
 
 /* Bottom sheet */
 .sheet {

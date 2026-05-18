@@ -44,8 +44,9 @@
       <canvas id="overlay"></canvas>
       <div class="reticle" aria-hidden="true"></div>
       <div id="status">Loading camera…</div>
-      <button id="legend-btn" type="button" aria-label="Toggle color legend">Legend</button>
+      <button id="legend-btn" type="button" aria-label="Toggle color legend" aria-expanded="false">Legend</button>
       <div id="legend" role="region" aria-label="Color legend">
+        <button id="legend-close" type="button" aria-label="Close legend">×</button>
         <div class="legend-item"><span class="legend-swatch" style="background:#f43f5e"></span>Finder pattern</div>
         <div class="legend-item"><span class="legend-swatch" style="background:#fbbf24"></span>Separator</div>
         <div class="legend-item"><span class="legend-swatch" style="background:#22c55e"></span>Timing pattern</div>
