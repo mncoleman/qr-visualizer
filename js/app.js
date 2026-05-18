@@ -404,14 +404,21 @@ function findRegionAt(point) {
   return null;
 }
 
-function handleOverlayClick(e) {
+function handleOverlayTap(e) {
   if (!qrInfo) return;
+  // pointerup/click both fire on mobile; guard against double-firing.
+  if (e.type === 'click' && e._handledByPointer) return;
   const rect = overlayCanvas.getBoundingClientRect();
-  const point = clientToCanvas(e.clientX, e.clientY, rect);
+  const cx = e.clientX ?? e.changedTouches?.[0]?.clientX;
+  const cy = e.clientY ?? e.changedTouches?.[0]?.clientY;
+  if (cx == null) return;
+  const point = clientToCanvas(cx, cy, rect);
   if (!point) return;
   const region = findRegionAt(point);
   if (region) showRegionInfo(region);
 }
+
+let pointerSawTap = false;
 
 // --- Bottom sheet ---
 function showRegionInfo(region) {
@@ -591,7 +598,19 @@ function backToLive() {
 }
 
 // --- Wire up ---
-overlayCanvas.addEventListener('click', handleOverlayClick);
+// Use pointerup for reliable tap detection on touch + mouse. Fall back to click.
+let lastTapAt = 0;
+overlayCanvas.addEventListener('pointerup', (e) => {
+  if (e.pointerType === 'touch' || e.pointerType === 'pen' || e.pointerType === 'mouse') {
+    lastTapAt = performance.now();
+    handleOverlayTap(e);
+  }
+});
+overlayCanvas.addEventListener('click', (e) => {
+  // Skip if pointerup already handled it within the last frame
+  if (performance.now() - lastTapAt < 600) return;
+  handleOverlayTap(e);
+});
 sheetClose.addEventListener('click', closeSheet);
 resumeBtn.addEventListener('click', backToLive);
 fileInput.addEventListener('change', (e) => {
