@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#0b1020" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="description" content="Point your camera at a QR code to see every section highlighted and explained — finder patterns, timing patterns, data, error correction, and more." />
+
+  <title>QR X-Ray — see inside a QR code</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <header>
+    <a href="index.html" class="brand" style="text-decoration:none; color:inherit;">
+      <span class="logo" aria-hidden="true">
+        <!-- 7×7 stylized finder pattern logo -->
+        <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+        <span></span><span class="off"></span><span class="off"></span><span class="off"></span><span class="off"></span><span class="off"></span><span></span>
+        <span></span><span class="off"></span><span></span><span></span><span></span><span class="off"></span><span></span>
+        <span></span><span class="off"></span><span></span><span></span><span></span><span class="off"></span><span></span>
+        <span></span><span class="off"></span><span></span><span></span><span></span><span class="off"></span><span></span>
+        <span></span><span class="off"></span><span class="off"></span><span class="off"></span><span class="off"></span><span class="off"></span><span></span>
+        <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+      </span>
+      QR X-Ray
+    </a>
+    <nav>
+      <a href="index.html" class="active">Scan</a>
+      <a href="learn.html">Learn</a>
+    </nav>
+  </header>
+
+  <main>
+    <div class="viewport">
+      <video id="video" playsinline muted></video>
+      <canvas id="capture"></canvas>
+      <canvas id="overlay"></canvas>
+      <div class="reticle" aria-hidden="true"><span></span></div>
+      <div id="status">Loading camera…</div>
+      <button id="legend-btn" type="button" aria-label="Toggle color legend">Legend</button>
+      <div id="legend" role="region" aria-label="Color legend">
+        <div class="legend-item"><span class="legend-swatch" style="background:#f43f5e"></span>Finder pattern</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:#fbbf24"></span>Separator</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:#22c55e"></span>Timing pattern</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:#3b82f6"></span>Alignment pattern</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:#a855f7"></span>Format info</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:#ec4899"></span>Version info</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:#0ea5e9"></span>Dark module</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:#94a3b8"></span>Data + ECC</div>
+      </div>
+    </div>
+
+    <section id="summary" hidden></section>
+
+    <div class="controls">
+      <label for="file-input" class="btn ghost" aria-label="Upload image">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+        Upload
+      </label>
+      <input id="file-input" type="file" accept="image/*" capture="environment" hidden />
+      <div class="spacer"></div>
+      <button id="resume" type="button" class="btn primary" hidden>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="16"></line><line x1="8" y1="12" x2="16" y2="12"></line></svg>
+        Scan another
+      </button>
+    </div>
+  </main>
+
+  <aside id="sheet" class="sheet" role="dialog" aria-modal="false" aria-labelledby="sheet-title">
+    <div class="sheet-grab" aria-hidden="true"></div>
+    <button id="sheet-close" class="sheet-close" aria-label="Close">×</button>
+    <h2 id="sheet-title"></h2>
+    <p id="sheet-short" class="short"></p>
+    <p id="sheet-body" class="body"></p>
+    <p style="margin: 4px 0 0;"><a href="learn.html" class="link">Read the full guide →</a></p>
+  </aside>
+
+  <script src="js/jsQR.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

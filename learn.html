@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1020" />
+  <title>How QR codes work — QR X-Ray</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <header>
+    <a href="index.html" class="brand" style="text-decoration:none; color:inherit;">
+      <span class="logo" aria-hidden="true">
+        <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+        <span></span><span class="off"></span><span class="off"></span><span class="off"></span><span class="off"></span><span class="off"></span><span></span>
+        <span></span><span class="off"></span><span></span><span></span><span></span><span class="off"></span><span></span>
+        <span></span><span class="off"></span><span></span><span></span><span></span><span class="off"></span><span></span>
+        <span></span><span class="off"></span><span></span><span></span><span></span><span class="off"></span><span></span>
+        <span></span><span class="off"></span><span class="off"></span><span class="off"></span><span class="off"></span><span class="off"></span><span></span>
+        <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+      </span>
+      QR X-Ray
+    </a>
+    <nav>
+      <a href="index.html">Scan</a>
+      <a href="learn.html" class="active">Learn</a>
+    </nav>
+  </header>
+
+  <main class="learn-wrap">
+    <h1>How QR codes work</h1>
+    <p class="short" style="color:var(--muted); font-size:16px; margin-top: 0;">
+      A QR code is a 2D black-and-white grid that encodes data and protects it with mathematical redundancy.
+      This page walks through every part — what it is, why it's there, and how a scanner reads it. Want to see one live?
+      <a href="index.html" class="cta" style="margin-left:6px; padding:6px 12px; font-size:14px;">Open the scanner →</a>
+    </p>
+
+    <svg class="qr-diagram" viewBox="0 0 21 21" xmlns="http://www.w3.org/2000/svg" aria-label="Anatomy of a QR code">
+      <!-- Background -->
+      <rect width="21" height="21" fill="white"/>
+
+      <!-- TL finder pattern -->
+      <g fill="#f43f5e" opacity="0.6"><rect x="0" y="0" width="7" height="7"/></g>
+      <g fill="white"><rect x="1" y="1" width="5" height="5"/></g>
+      <g fill="#f43f5e" opacity="0.85"><rect x="2" y="2" width="3" height="3"/></g>
+      <!-- TR finder -->
+      <g fill="#f43f5e" opacity="0.6"><rect x="14" y="0" width="7" height="7"/></g>
+      <g fill="white"><rect x="15" y="1" width="5" height="5"/></g>
+      <g fill="#f43f5e" opacity="0.85"><rect x="16" y="2" width="3" height="3"/></g>
+      <!-- BL finder -->
+      <g fill="#f43f5e" opacity="0.6"><rect x="0" y="14" width="7" height="7"/></g>
+      <g fill="white"><rect x="1" y="15" width="5" height="5"/></g>
+      <g fill="#f43f5e" opacity="0.85"><rect x="2" y="16" width="3" height="3"/></g>
+
+      <!-- Timing patterns -->
+      <g fill="#22c55e">
+        <rect x="8" y="6" width="1" height="1"/><rect x="10" y="6" width="1" height="1"/><rect x="12" y="6" width="1" height="1"/>
+        <rect x="6" y="8" width="1" height="1"/><rect x="6" y="10" width="1" height="1"/><rect x="6" y="12" width="1" height="1"/>
+      </g>
+
+      <!-- Format info (purple cells) -->
+      <g fill="#a855f7" opacity="0.65">
+        <rect x="0" y="8" width="6" height="1"/>
+        <rect x="7" y="8" width="2" height="1"/>
+        <rect x="8" y="0" width="1" height="6"/>
+        <rect x="8" y="7" width="1" height="1"/>
+        <rect x="13" y="8" width="8" height="1"/>
+        <rect x="8" y="13" width="1" height="8"/>
+      </g>
+
+      <!-- Dark module -->
+      <rect x="8" y="13" width="1" height="1" fill="#0ea5e9"/>
+
+      <!-- Data fill (sparse, illustrative) -->
+      <g fill="#94a3b8" opacity="0.45">
+        <rect x="9" y="9" width="4" height="4"/>
+        <rect x="9" y="14" width="4" height="4"/>
+        <rect x="14" y="9" width="4" height="4"/>
+        <rect x="14" y="14" width="4" height="4"/>
+        <rect x="14" y="19" width="4" height="2"/>
+      </g>
+    </svg>
+    <p style="text-align:center; color:var(--muted); font-size:13px; margin-top:-4px;">
+      <span class="tag" style="background:#f43f5e;color:white">Finder</span>
+      <span class="tag" style="background:#22c55e;color:white">Timing</span>
+      <span class="tag" style="background:#a855f7;color:white">Format</span>
+      <span class="tag" style="background:#0ea5e9;color:white">Dark mod.</span>
+      <span class="tag" style="background:#94a3b8;color:white">Data + ECC</span>
+    </p>
+
+    <h2>1. The grid</h2>
+    <p>
+      A QR code is built on a square grid of black and white squares called <strong>modules</strong>. The grid size is set
+      by the QR <strong>version</strong> (1 through 40). Each version up adds 4 modules per side:
+    </p>
+    <ul>
+      <li>Version 1 → 21×21 modules</li>
+      <li>Version 2 → 25×25 modules</li>
+      <li>Version 10 → 57×57 modules</li>
+      <li>Version 40 → 177×177 modules (the largest)</li>
+    </ul>
+    <p>The more data you encode, the higher the version needed.</p>
+
+    <h2>2. Function patterns</h2>
+    <p>Some modules don't carry data — they exist purely to help scanners find and orient the code.</p>
+
+    <h3>Finder patterns</h3>
+    <p>
+      Three identical 7×7 nested squares in three of the four corners. The ratio of dark:light:dark:light:dark widths through
+      any line through the center is always <code>1:1:3:1:1</code>. This pattern is mathematically distinctive — even at angles
+      and partial occlusion, scanners can detect it reliably.
+    </p>
+    <p>Three corners, not four — the missing fourth corner tells the scanner which way is up.</p>
+
+    <h3>Separators</h3>
+    <p>
+      A 1-module-wide white border on the inside edges of each finder pattern. Without these, dark data modules
+      next to the finder could fool the ratio detector.
+    </p>
+
+    <h3>Timing patterns</h3>
+    <p>
+      Two strips of alternating dark/light modules running across row 6 and column 6 (between the finder patterns).
+      The scanner uses them as a ruler — counting the alternations tells it how many modules wide the code is, which
+      tells it the version. The timing pattern also anchors the grid when the image is warped or photographed at an angle.
+    </p>
+
+    <h3>Alignment patterns</h3>
+    <p>
+      Starting at version 2, smaller 5×5 nested squares appear at predictable positions. Their job is to correct for
+      <strong>local distortion</strong> — when the QR is photographed at an angle, printed on a curved surface, or warped
+      by the camera lens. With multiple alignment patterns, the scanner can compute a non-linear correction map.
+    </p>
+    <p>Bigger QR codes need more alignment patterns:</p>
+    <ul>
+      <li>V1: zero alignment patterns</li>
+      <li>V2–V6: one alignment pattern</li>
+      <li>V7–V13: six alignment patterns</li>
+      <li>V40: 46 alignment patterns</li>
+    </ul>
+
+    <h2>3. Format information</h2>
+    <p>
+      Two copies of 15 bits encoding two facts the scanner <em>must</em> know before reading anything else:
+    </p>
+    <ol>
+      <li>The <strong>error correction level</strong> (L, M, Q, or H)</li>
+      <li>The <strong>mask pattern</strong> used (0 through 7)</li>
+    </ol>
+    <p>
+      Why two copies? So that even if part of the format strip is damaged, the scanner can still recover it. The 15 bits are
+      BCH-encoded (10 bits of redundancy on 5 bits of real info) and XORed with <code>0x5412</code> to avoid an all-zero pattern,
+      which would be visually ambiguous.
+    </p>
+
+    <h3>Error correction levels</h3>
+    <p>QR codes use <strong>Reed-Solomon error correction</strong>. You pick a level when you generate the code:</p>
+    <ul>
+      <li><strong>L</strong> — recovers ~7% damaged codewords. Smallest QR, least durable.</li>
+      <li><strong>M</strong> — ~15% recovery. Common default.</li>
+      <li><strong>Q</strong> — ~25% recovery.</li>
+      <li><strong>H</strong> — ~30% recovery. Largest QR, most durable. Lets you cover ~30% of the code with a logo and still scan.</li>
+    </ul>
+
+    <h3>Mask patterns</h3>
+    <p>
+      After the data + error correction modules are placed, one of eight mask patterns is XORed onto them.
+      The goal: avoid large runs of dark or light modules, avoid accidentally forming finder-pattern-like ratios in the data,
+      and balance overall darkness. A QR generator tries all 8 masks, scores them with a penalty function, and picks the best.
+    </p>
+    <p>The 8 masks (a module at row, col is flipped when the formula is true):</p>
+    <ul>
+      <li>Mask 0: <code>(row + col) mod 2 == 0</code></li>
+      <li>Mask 1: <code>row mod 2 == 0</code></li>
+      <li>Mask 2: <code>col mod 3 == 0</code></li>
+      <li>Mask 3: <code>(row + col) mod 3 == 0</code></li>
+      <li>Mask 4: <code>(⌊row/2⌋ + ⌊col/3⌋) mod 2 == 0</code></li>
+      <li>Mask 5: <code>(row · col) mod 2 + (row · col) mod 3 == 0</code></li>
+      <li>Mask 6: <code>((row · col) mod 2 + (row · col) mod 3) mod 2 == 0</code></li>
+      <li>Mask 7: <code>((row + col) mod 2 + (row · col) mod 3) mod 2 == 0</code></li>
+    </ul>
+
+    <h2>4. Version information (V7+)</h2>
+    <p>
+      Versions 1–6 are recognizable by counting modules along the timing pattern. Versions 7 and above also include an
+      explicit version block — two 6×3 patches, one near the top-right finder, one near the bottom-left. Each carries 18 bits
+      (6 bits of version number + 12 bits of BCH redundancy).
+    </p>
+
+    <h2>5. The dark module</h2>
+    <p>
+      A single module that's always dark, regardless of content. Located at row <code>(4 × version + 9)</code>, column <code>8</code>.
+      It's just above the bottom-left finder pattern's separator. The spec quirkily requires it; treat it as a sanity-check
+      landmark.
+    </p>
+
+    <h2>6. Data + error correction</h2>
+    <p>
+      Everything else — every module that isn't a finder, separator, timing, alignment, format, version, or dark module —
+      is either a <strong>data codeword</strong> or an <strong>error-correction codeword</strong>.
+    </p>
+
+    <h3>Placement order</h3>
+    <p>
+      Codewords are placed starting from the <strong>bottom-right corner</strong>, working up and down in 2-column-wide
+      vertical channels, snaking back and forth, skipping over function patterns. Inside each 2-column channel, bits are
+      placed right-bit-first, then left-bit, then up to the next row.
+    </p>
+
+    <h3>Encoding modes</h3>
+    <p>The 4-bit mode indicator at the start of the data tells the scanner how to interpret the bits that follow:</p>
+    <ul>
+      <li><strong>Numeric</strong> (digits 0–9) — 10 bits per 3 digits. Most compact.</li>
+      <li><strong>Alphanumeric</strong> (0–9, A–Z, space, <code>$%*+-./:</code>) — 11 bits per 2 characters.</li>
+      <li><strong>Byte</strong> (arbitrary bytes, usually ISO-8859-1 or UTF-8) — 8 bits per byte. Used for URLs, anything non-ASCII.</li>
+      <li><strong>Kanji</strong> (Shift-JIS Japanese) — 13 bits per character.</li>
+    </ul>
+    <p>A single QR code can mix multiple modes — switching with a new 4-bit mode indicator and length count any time.</p>
+
+    <h3>Reed-Solomon error correction</h3>
+    <p>
+      The data codewords are followed by Reed-Solomon parity codewords. RS works over the Galois field GF(2^8), treating
+      each byte as an element. The number of parity bytes depends on the error correction level. RS can correct any
+      combination of <em>e</em> errors and <em>s</em> erasures (known-missing bytes) such that <code>2e + s ≤ number of
+      parity bytes</code>.
+    </p>
+    <p>
+      For larger QR codes, the codewords are split into multiple <strong>blocks</strong>, each with its own parity. This
+      prevents a single concentrated smudge from wiping out enough data in one block to be unrecoverable — the damage
+      spreads across blocks, each of which can heal independently.
+    </p>
+
+    <h2>7. The quiet zone</h2>
+    <p>
+      The specification calls for a 4-module-wide white margin around the code. This isn't decoration — many scanners
+      fail or struggle without it. If you're designing a QR code into print or a UI, leave the margin.
+    </p>
+
+    <h2>The decoding sequence in order</h2>
+    <ol>
+      <li>Find three finder patterns by scanning rows/columns for the 1:1:3:1:1 ratio.</li>
+      <li>Determine rough orientation from the three positions.</li>
+      <li>Count modules along the timing pattern → determine version (or read version info for V7+).</li>
+      <li>Locate alignment patterns; compute a corrective grid sampling map.</li>
+      <li>Read each format-info copy; majority vote or BCH-correct to get EC level + mask.</li>
+      <li>XOR the mask off the data + ECC modules.</li>
+      <li>Read codewords in the standard zigzag order.</li>
+      <li>De-interleave codeword blocks; run Reed-Solomon correction on each.</li>
+      <li>Parse the bitstream: mode → length → content → optional more modes → terminator.</li>
+    </ol>
+
+    <h2>Try it</h2>
+    <p>
+      <a href="index.html" class="cta">Scan a QR code → see every section live</a>
+    </p>
+
+    <h2>Further reading</h2>
+    <ul>
+      <li>ISO/IEC 18004 — the official QR Code 2005 specification (the bible).</li>
+      <li><a href="https://www.thonky.com/qr-code-tutorial/" target="_blank" rel="noopener">Thonky's QR Code Tutorial</a> — beautifully detailed end-to-end walkthrough.</li>
+      <li><a href="https://www.nayuki.io/page/creating-a-qr-code-step-by-step" target="_blank" rel="noopener">Nayuki's interactive QR builder</a> — adjustable step-by-step encoder.</li>
+    </ul>
+  </main>
+
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('./sw.js').catch(() => {});
+    }
+  </script>
+</body>
+</html>

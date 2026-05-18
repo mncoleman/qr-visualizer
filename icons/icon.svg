@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#0b1020"/>
+  <!-- Stylized QR with accent overlay -->
+  <g transform="translate(56 56)">
+    <!-- TL finder -->
+    <rect x="0" y="0" width="120" height="120" fill="#f43f5e" rx="14"/>
+    <rect x="20" y="20" width="80" height="80" fill="#0b1020" rx="6"/>
+    <rect x="40" y="40" width="40" height="40" fill="#f43f5e" rx="4"/>
+    <!-- TR finder -->
+    <rect x="280" y="0" width="120" height="120" fill="#a855f7" rx="14"/>
+    <rect x="300" y="20" width="80" height="80" fill="#0b1020" rx="6"/>
+    <rect x="320" y="40" width="40" height="40" fill="#a855f7" rx="4"/>
+    <!-- BL finder -->
+    <rect x="0" y="280" width="120" height="120" fill="#22c55e" rx="14"/>
+    <rect x="20" y="300" width="80" height="80" fill="#0b1020" rx="6"/>
+    <rect x="40" y="320" width="40" height="40" fill="#22c55e" rx="4"/>
+    <!-- Data blocks -->
+    <g fill="#6ee7b7" opacity="0.9">
+      <rect x="180" y="40" width="36" height="36" rx="4"/>
+      <rect x="220" y="80" width="36" height="36" rx="4"/>
+      <rect x="180" y="180" width="36" height="36" rx="4"/>
+      <rect x="240" y="180" width="36" height="36" rx="4"/>
+      <rect x="300" y="180" width="36" height="36" rx="4"/>
+      <rect x="180" y="240" width="36" height="36" rx="4"/>
+      <rect x="240" y="300" width="36" height="36" rx="4"/>
+      <rect x="180" y="340" width="36" height="36" rx="4"/>
+      <rect x="300" y="280" width="36" height="36" rx="4"/>
+      <rect x="360" y="240" width="36" height="36" rx="4"/>
+      <rect x="40" y="180" width="36" height="36" rx="4"/>
+    </g>
+    <!-- Scan beam -->
+    <rect x="-10" y="190" width="420" height="20" fill="#60a5fa" opacity="0.55" rx="10"/>
+  </g>
+</svg>
