@@ -33,6 +33,12 @@ const summaryPeek = summary?.querySelector('.summary-peek');
 const legendBtn = document.getElementById('legend-btn');
 const legend = document.getElementById('legend');
 const readPathBtn = document.getElementById('readpath-btn');
+const freezeBtn = document.getElementById('freeze-btn');
+const infoBtn = document.getElementById('info-btn');
+const zoomControls = document.getElementById('zoom-controls');
+const zoomInBtn = document.getElementById('zoom-in');
+const zoomOutBtn = document.getElementById('zoom-out');
+const zoomReadout = document.getElementById('zoom-readout');
 
 // --- State ---
 let stream = null;
@@ -47,6 +53,12 @@ let readPathByVersion = new Map();
 let openRegionType = null;    // type currently open in the sheet — kept synced as QR changes
 let readPathOn = false;
 let readPath = [];            // current QR's path
+let isFrozen = false;
+let frozenSnapshot = null;    // ImageData of the paused frame
+let zoomCaps = null;          // { min, max, step } from track capabilities, or null
+let zoomValue = 1;
+let infoVisible = false;
+let animTimer = null;         // rAF id for read-path animation
 
 // "Recently saw a QR" hysteresis — keeps overlay & summary visible across brief misses.
 const TRACK_TIMEOUT_MS = 600;
@@ -65,6 +77,7 @@ async function startCamera() {
     statusEl.textContent = 'Point camera at a QR code';
     mode = 'live';
     scanning = true;
+    setupZoom();
     syncOverlaySize();
     requestAnimationFrame(scanLoop);
   } catch (err) {
@@ -136,8 +149,116 @@ function getReadPath(version) {
 // --- Per-frame scan + draw loop ---
 let lastFormatInfoVersion = -1;
 
+// --- Camera zoom (native MediaTrack constraints) ---
+function setupZoom() {
+  if (!stream) return;
+  const track = stream.getVideoTracks()[0];
+  const caps = track.getCapabilities?.();
+  if (caps && typeof caps.zoom === 'object') {
+    zoomCaps = { min: caps.zoom.min ?? 1, max: caps.zoom.max ?? 1, step: caps.zoom.step ?? 0.1 };
+    if (zoomCaps.max > zoomCaps.min) {
+      zoomValue = Math.max(zoomCaps.min, Math.min(zoomCaps.max, 1));
+      zoomControls.hidden = false;
+      updateZoomReadout();
+      return;
+    }
+  }
+  zoomCaps = null;
+  zoomControls.hidden = true;
+}
+
+function updateZoomReadout() {
+  zoomReadout.textContent = `${zoomValue.toFixed(zoomValue < 10 ? 1 : 0)}×`;
+}
+
+async function applyZoom(target) {
+  if (!stream || !zoomCaps) return;
+  const v = Math.max(zoomCaps.min, Math.min(zoomCaps.max, target));
+  const track = stream.getVideoTracks()[0];
+  try {
+    await track.applyConstraints({ advanced: [{ zoom: v }] });
+    zoomValue = v;
+    updateZoomReadout();
+  } catch (e) {
+    console.warn('Zoom constraint rejected', e);
+  }
+}
+
+// --- Freeze / resume ---
+function freezeFrame() {
+  if (mode !== 'live' || isFrozen) return;
+  isFrozen = true;
+  scanning = false;
+  // Snapshot the current video frame to captureCanvas
+  const w = video.videoWidth || overlayCanvas.width;
+  const h = video.videoHeight || overlayCanvas.height;
+  captureCanvas.width = w;
+  captureCanvas.height = h;
+  const ctx = captureCanvas.getContext('2d');
+  ctx.drawImage(video, 0, 0, w, h);
+  frozenSnapshot = ctx.getImageData(0, 0, w, h);
+  video.style.display = 'none';
+  captureCanvas.style.display = 'block';
+  // Run one decode on the snapshot so qrInfo reflects this exact frame
+  const r = jsQR(frozenSnapshot.data, w, h, { inversionAttempts: 'attemptBoth' });
+  if (r && isPlausibleDetection(r, w, h)) {
+    const version = r.version || 1;
+    const { size, regions: grouped } = getRegionsForVersion(version);
+    let formatInfo = null;
+    try { formatInfo = decodeFormatInfo(sampleBitMatrix(frozenSnapshot, r.location, size), size); } catch {}
+    qrInfo = { version, size, location: r.location, data: r.data, chunks: r.chunks, formatInfo };
+    regions = grouped;
+    readPath = getReadPath(version);
+    document.body.classList.add('tracking');
+    renderSummary();
+  }
+  drawOverlay();
+  freezeBtn.setAttribute('aria-pressed', 'true');
+  freezeBtn.setAttribute('aria-label', 'Resume');
+  freezeBtn.title = 'Resume';
+  document.getElementById('freeze-icon').innerHTML = '<polygon points="6 4 20 12 6 20 6 4"/>';
+  statusEl.textContent = qrInfo ? `Frozen — version ${qrInfo.version}  ·  tap a section` : 'Frozen';
+}
+
+function resumeFrame() {
+  if (!isFrozen) return;
+  isFrozen = false;
+  frozenSnapshot = null;
+  captureCanvas.style.display = 'none';
+  video.style.display = 'block';
+  freezeBtn.setAttribute('aria-pressed', 'false');
+  freezeBtn.setAttribute('aria-label', 'Freeze frame');
+  freezeBtn.title = 'Freeze';
+  document.getElementById('freeze-icon').innerHTML = '<rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/>';
+  scanning = true;
+  requestAnimationFrame(scanLoop);
+}
+
+// --- Info drawer visibility ---
+function setInfoVisible(v) {
+  infoVisible = v;
+  document.body.classList.toggle('show-info', v);
+  infoBtn.setAttribute('aria-pressed', String(v));
+}
+
+// --- Read path animation loop ---
+function startAnimLoop() {
+  if (animTimer) return;
+  const tick = () => {
+    if (!readPathOn || !qrInfo) { animTimer = null; return; }
+    drawOverlay();
+    animTimer = requestAnimationFrame(tick);
+  };
+  animTimer = requestAnimationFrame(tick);
+}
+function stopAnimLoop() {
+  if (animTimer) cancelAnimationFrame(animTimer);
+  animTimer = null;
+}
+
 function scanLoop(ts) {
   if (!scanning) return;
+  if (isFrozen) { requestAnimationFrame(scanLoop); return; }
   if (video.readyState >= 2 && video.videoWidth > 0) {
     syncOverlaySize();
     const w = video.videoWidth, h = video.videoHeight;
@@ -274,18 +395,19 @@ function drawRegions(ctx) {
   }
 }
 
-// Read-path overlay: color each data module by its codeword (8 bits = 1 byte),
-// and draw an arrowed polyline showing the placement order. When the on-screen
-// module size is large enough, draw numbered bits too.
+// Read-path overlay — a visual story of how a scanner reads the QR.
+//   1. Dim function patterns so data area pops.
+//   2. Faint colored fill (codeword hue) on every data module.
+//   3. A persistent white polyline through ALL bit centers in placement order.
+//   4. An animated glowing cursor walks the path so order is obvious.
+//   5. Big green "START" pulse on bit 0, big red marker on the last bit.
+//   6. The codeword the cursor is currently inside gets a bright outline.
 function drawReadPath(ctx) {
   const screenPx = moduleScreenSize();
-  const showArrows = screenPx >= 14;
-  const showNumbers = screenPx >= 28;
-
-  // Step 1: dim the function patterns so read-path stands out.
+  // Pass 1: dim function patterns
   for (const region of regions) {
     if (region.type === T.DATA) continue;
-    ctx.fillStyle = 'rgba(40, 50, 80, 0.55)';
+    ctx.fillStyle = 'rgba(15, 21, 48, 0.72)';
     ctx.beginPath();
     for (const [r, c] of region.cells) {
       const cn = moduleCorners(qrInfo.location, qrInfo.size, r, c);
@@ -298,13 +420,13 @@ function drawReadPath(ctx) {
     ctx.fill();
   }
 
-  // Step 2: color each data module by codeword index using an HSL cycle.
+  // Pass 2: codeword color fill (faint)
   for (let i = 0; i < readPath.length; i++) {
     const [r, c] = readPath[i];
     const codeword = Math.floor(i / 8);
-    const hue = (codeword * 41) % 360;
+    const hue = (codeword * 47) % 360;
     const cn = moduleCorners(qrInfo.location, qrInfo.size, r, c);
-    ctx.fillStyle = `hsla(${hue}, 80%, 55%, 0.65)`;
+    ctx.fillStyle = `hsla(${hue}, 80%, 60%, 0.35)`;
     ctx.beginPath();
     ctx.moveTo(cn[0].x, cn[0].y);
     ctx.lineTo(cn[1].x, cn[1].y);
@@ -314,51 +436,128 @@ function drawReadPath(ctx) {
     ctx.fill();
   }
 
-  // Step 3: arrowed polyline through bit centers (only when zoomed in).
-  if (showArrows) {
-    ctx.lineWidth = Math.max(1, screenPx / 14);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
+  if (readPath.length === 0) return;
+
+  // Compute per-bit centers (canvas-space) once
+  const centers = readPath.map(([r, c]) => moduleCenter(r, c));
+
+  // Estimate one "module" in canvas pixels for sizing lines/dots consistently
+  const modCanvasPx = Math.hypot(
+    centers[1] ? centers[1].x - centers[0].x : 4,
+    centers[1] ? centers[1].y - centers[0].y : 4,
+  ) || 4;
+
+  // Pass 3: full polyline through all centers — the visible "path"
+  ctx.lineWidth = Math.max(1.2, modCanvasPx * 0.18);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(centers[0].x, centers[0].y);
+  for (let i = 1; i < centers.length; i++) ctx.lineTo(centers[i].x, centers[i].y);
+  ctx.stroke();
+
+  // Pass 4: arrowheads at every codeword boundary (every 8 bits)
+  const headSize = Math.max(3, modCanvasPx * 0.5);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+  for (let i = 8; i < centers.length; i += 8) {
+    const a = centers[i - 1];
+    const b = centers[i];
+    const ang = Math.atan2(b.y - a.y, b.x - a.x);
     ctx.beginPath();
-    const first = moduleCenter(readPath[0][0], readPath[0][1]);
-    ctx.moveTo(first.x, first.y);
-    for (let i = 1; i < readPath.length; i++) {
-      const p = moduleCenter(readPath[i][0], readPath[i][1]);
-      ctx.lineTo(p.x, p.y);
-    }
-    ctx.stroke();
-
-    // Arrowheads on codeword boundaries
-    const headSize = Math.max(4, screenPx * 0.45);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
-    for (let i = 8; i < readPath.length; i += 8) {
-      const a = moduleCenter(readPath[i - 1][0], readPath[i - 1][1]);
-      const b = moduleCenter(readPath[i][0], readPath[i][1]);
-      const ang = Math.atan2(b.y - a.y, b.x - a.x);
-      ctx.beginPath();
-      ctx.moveTo(b.x, b.y);
-      ctx.lineTo(b.x - headSize * Math.cos(ang - 0.4), b.y - headSize * Math.sin(ang - 0.4));
-      ctx.lineTo(b.x - headSize * Math.cos(ang + 0.4), b.y - headSize * Math.sin(ang + 0.4));
-      ctx.closePath();
-      ctx.fill();
-    }
+    ctx.moveTo(b.x, b.y);
+    ctx.lineTo(b.x - headSize * Math.cos(ang - 0.45), b.y - headSize * Math.sin(ang - 0.45));
+    ctx.lineTo(b.x - headSize * Math.cos(ang + 0.45), b.y - headSize * Math.sin(ang + 0.45));
+    ctx.closePath();
+    ctx.fill();
   }
 
-  // Step 4: per-bit numbers (only when extremely zoomed in).
-  if (showNumbers) {
-    const fontSize = Math.max(8, Math.round(screenPx * 0.45));
-    ctx.font = `bold ${fontSize}px ui-monospace, Menlo, monospace`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
-    for (let i = 0; i < readPath.length; i++) {
-      const p = moduleCenter(readPath[i][0], readPath[i][1]);
-      const bit = i % 8;
-      const cw = Math.floor(i / 8);
-      ctx.fillText(`${cw}.${bit}`, p.x, p.y);
-    }
-  }
+  // Pass 5: animated cursor walks the path
+  // Speed: traverse the whole path every ~6 seconds.
+  const t = (performance.now() / 6000) % 1; // 0..1
+  const fpos = t * (centers.length - 1);
+  const idx = Math.floor(fpos);
+  const frac = fpos - idx;
+  const a = centers[idx];
+  const b = centers[Math.min(idx + 1, centers.length - 1)];
+  const cx = a.x + (b.x - a.x) * frac;
+  const cy = a.y + (b.y - a.y) * frac;
+
+  // Trail behind cursor (last ~16 bits) — brighter than baseline path
+  const trailStart = Math.max(0, idx - 16);
+  ctx.lineWidth = Math.max(1.8, modCanvasPx * 0.32);
+  ctx.strokeStyle = 'rgba(110, 231, 183, 0.95)';
+  ctx.beginPath();
+  ctx.moveTo(centers[trailStart].x, centers[trailStart].y);
+  for (let i = trailStart + 1; i <= idx; i++) ctx.lineTo(centers[i].x, centers[i].y);
+  ctx.lineTo(cx, cy);
+  ctx.stroke();
+
+  // Glow ring around cursor
+  const r1 = Math.max(4, modCanvasPx * 0.7);
+  const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r1 * 2.2);
+  grad.addColorStop(0, 'rgba(110, 231, 183, 0.95)');
+  grad.addColorStop(0.4, 'rgba(110, 231, 183, 0.55)');
+  grad.addColorStop(1, 'rgba(110, 231, 183, 0)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r1 * 2.2, 0, Math.PI * 2);
+  ctx.fill();
+  // Solid dot
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(cx, cy, r1 * 0.55, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Pass 6: START marker (green pulsing dot + label) on bit 0
+  const start = centers[0];
+  const pulse = 0.7 + 0.3 * Math.sin(performance.now() / 250);
+  ctx.fillStyle = `rgba(34, 197, 94, ${pulse})`;
+  ctx.beginPath();
+  ctx.arc(start.x, start.y, modCanvasPx * 0.85, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(start.x, start.y, modCanvasPx * 0.3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // END marker
+  const end = centers[centers.length - 1];
+  ctx.fillStyle = 'rgba(239, 68, 68, 0.85)';
+  ctx.beginPath();
+  ctx.arc(end.x, end.y, modCanvasPx * 0.75, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Pass 7: labels — "START" and "END" near the markers + cursor codeword index
+  const fontPx = Math.max(10, Math.round(modCanvasPx * 1.3));
+  ctx.font = `700 ${fontPx}px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  // START label
+  drawLabel(ctx, 'START', start.x, start.y - modCanvasPx * 2, '#22c55e');
+  drawLabel(ctx, 'END',   end.x,   end.y   + modCanvasPx * 2, '#ef4444');
+  // Cursor codeword label
+  const cwIdx = Math.floor(idx / 8);
+  const bitIdx = idx % 8;
+  drawLabel(ctx, `byte ${cwIdx} · bit ${bitIdx}`, cx, cy - modCanvasPx * 2, '#6ee7b7');
+}
+
+function drawLabel(ctx, text, x, y, color) {
+  const padX = 6, padY = 3;
+  const m = ctx.measureText(text);
+  const w = m.width + padX * 2;
+  const h = parseInt(ctx.font, 10) + padY * 2;
+  ctx.fillStyle = 'rgba(11, 16, 32, 0.92)';
+  ctx.beginPath();
+  ctx.roundRect ? ctx.roundRect(x - w / 2, y - h / 2, w, h, 6) : ctx.rect(x - w / 2, y - h / 2, w, h);
+  ctx.fill();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.roundRect ? ctx.roundRect(x - w / 2, y - h / 2, w, h, 6) : ctx.rect(x - w / 2, y - h / 2, w, h);
+  ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.fillText(text, x, y);
 }
 
 // --- Click → identify region via point-in-polygon over module quads ---
@@ -694,8 +893,17 @@ readPathBtn.addEventListener('click', () => {
   readPathOn = !readPathOn;
   readPathBtn.setAttribute('aria-pressed', String(readPathOn));
   document.body.classList.toggle('readpath-on', readPathOn);
+  if (readPathOn) startAnimLoop();
+  else stopAnimLoop();
   if (qrInfo) drawOverlay();
 });
+freezeBtn.addEventListener('click', () => {
+  if (mode !== 'live') return;
+  if (isFrozen) resumeFrame(); else freezeFrame();
+});
+infoBtn.addEventListener('click', () => setInfoVisible(!infoVisible));
+zoomInBtn.addEventListener('click', () => applyZoom(zoomValue + (zoomCaps?.step || 0.5)));
+zoomOutBtn.addEventListener('click', () => applyZoom(zoomValue - (zoomCaps?.step || 0.5)));
 window.addEventListener('resize', syncOverlaySize);
 
 // Init

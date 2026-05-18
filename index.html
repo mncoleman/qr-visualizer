@@ -44,6 +44,11 @@
       <canvas id="overlay"></canvas>
       <div class="reticle" aria-hidden="true"></div>
       <div id="status">Loading camera…</div>
+      <div id="zoom-controls" hidden>
+        <button id="zoom-out" type="button" class="zoom-btn" aria-label="Zoom out">−</button>
+        <span id="zoom-readout">1×</span>
+        <button id="zoom-in" type="button" class="zoom-btn" aria-label="Zoom in">+</button>
+      </div>
       <button id="legend-btn" type="button" aria-label="Toggle color legend" aria-expanded="false">Legend</button>
       <div id="legend" role="region" aria-label="Color legend">
         <button id="legend-close" type="button" aria-label="Close legend">×</button>
@@ -66,19 +71,24 @@
     </div>
 
     <div class="controls">
-      <label for="file-input" class="btn ghost" aria-label="Upload image">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-        Upload
+      <label for="file-input" class="btn icon-btn" aria-label="Upload image" title="Upload an image">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
       </label>
       <input id="file-input" type="file" accept="image/*" capture="environment" hidden />
+      <button id="freeze-btn" type="button" class="btn icon-btn" aria-pressed="false" aria-label="Freeze frame" title="Freeze">
+        <svg id="freeze-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>
+      </button>
       <button id="readpath-btn" type="button" class="btn" aria-pressed="false" title="Show the order modules are read">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"></path><path d="M7 14l4-4 4 4 5-5"></path></svg>
         Read path
       </button>
-      <div class="spacer"></div>
+      <button id="info-btn" type="button" class="btn" aria-pressed="false" title="Show decoded details">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        Info
+      </button>
       <button id="resume" type="button" class="btn primary" hidden>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>
-        Back to camera
+        Camera
       </button>
     </div>
   </main>
