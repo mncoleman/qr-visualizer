@@ -164,9 +164,37 @@ export const COLORS = {
   [T.FORMAT]:    { fill: 'rgba(168, 85, 247, 0.55)', stroke: '#a855f7' },  // violet
   [T.VERSION]:   { fill: 'rgba(236, 72, 153, 0.55)', stroke: '#ec4899' },  // pink
   [T.DARK]:      { fill: 'rgba(14, 165, 233, 0.7)',  stroke: '#0ea5e9' },  // sky
-  [T.DATA]:      { fill: 'rgba(148, 163, 184, 0.25)', stroke: '#94a3b8' }, // slate
+  [T.DATA]:      { fill: 'rgba(148, 163, 184, 0.45)', stroke: '#94a3b8' }, // slate
   [T.QUIET]:     { fill: 'rgba(229, 231, 235, 0.3)', stroke: '#e5e7eb' },
 };
+
+// Compute the canonical zigzag placement order for data + ECC codewords.
+// Returns an ordered list of [row, col] module positions, in the same order a
+// QR encoder/decoder reads them. Length = 8 × (data + ecc codewords).
+// Per ISO/IEC 18004 §7.7.3.
+export function computeReadPath(grid) {
+  const { size, map } = grid;
+  const isData = (r, c) => map[r][c].type === T.DATA;
+  const path = [];
+  let row = size - 1;
+  let col = size - 1;
+  let goingUp = true;
+
+  while (col > 0) {
+    if (col === 6) col--; // skip vertical timing column
+    while (row >= 0 && row < size) {
+      for (const dc of [0, -1]) {
+        const c = col + dc;
+        if (c >= 0 && isData(row, c)) path.push([row, c]);
+      }
+      row += goingUp ? -1 : 1;
+    }
+    goingUp = !goingUp;
+    row += goingUp ? -1 : 1; // step back into bounds
+    col -= 2;
+  }
+  return path;
+}
 
 // Group adjacent same-type cells into rectangular regions for cleaner overlay.
 // Returns array of { type, role, sub, copy, cells: [[r,c],...] }

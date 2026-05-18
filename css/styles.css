@@ -96,12 +96,18 @@ main {
   height: 100%;
   object-fit: contain;
 }
-#capture, #overlay {
+#capture {
   position: absolute;
   inset: 0;
   display: none;
 }
-#overlay { pointer-events: auto; cursor: pointer; }
+#overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+  cursor: pointer;
+  z-index: 2;
+}
 
 #status {
   position: absolute;
@@ -123,19 +129,13 @@ main {
   position: absolute;
   width: min(70vmin, 360px);
   height: min(70vmin, 360px);
-  border: 2px solid rgba(110, 231, 183, 0.6);
+  border: 2px solid rgba(110, 231, 183, 0.55);
   border-radius: 18px;
   pointer-events: none;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.18);
 }
-.viewport .reticle::before, .viewport .reticle::after,
-.viewport .reticle > span, .viewport .reticle > span::before {
-  content: ""; position: absolute; width: 22px; height: 22px;
-  border: 3px solid var(--accent);
-}
-.viewport .reticle::before { top: -3px; left: -3px; border-right: none; border-bottom: none; border-radius: 6px 0 0 0; }
-.viewport .reticle::after  { top: -3px; right: -3px; border-left: none; border-bottom: none; border-radius: 0 6px 0 0; }
-.viewport .reticle > span  { bottom: -3px; left: -3px;  border-right: none; border-top: none; border-radius: 0 0 0 6px; }
-.viewport .reticle > span::before { bottom: -3px; right: -3px; border-left: none; border-top: none; border-radius: 0 0 6px 0; left: auto; top: auto; }
+/* Hide reticle when a QR is being tracked */
+.tracking .viewport .reticle { display: none; }
 
 .controls {
   display: flex;
@@ -162,6 +162,11 @@ main {
 .btn:hover { background: #232c52; }
 .btn.primary { background: var(--accent); color: #062e21; border-color: transparent; }
 .btn.primary:hover { background: #86efac; }
+.btn[aria-pressed="true"] {
+  background: var(--accent);
+  color: #062e21;
+  border-color: transparent;
+}
 .btn.ghost { background: transparent; }
 .btn[hidden] { display: none; }
 .spacer { flex: 1; }
@@ -182,7 +187,64 @@ main {
   gap: 12px;
   align-items: start;
 }
-.summary-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; padding-top: 2px; }
+.summary-label {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.tip {
+  position: relative;
+  display: inline-flex;
+}
+.tip-btn {
+  width: 16px; height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+.tip-btn:hover, .tip-btn:focus { color: var(--text); background: #2a3358; outline: none; }
+.tip-content {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 20;
+  background: #0f1530;
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.4);
+  width: min(280px, 70vw);
+  white-space: normal;
+  line-height: 1.45;
+}
+.tip-content::after {
+  content: "";
+  position: absolute;
+  top: 100%; left: 8px;
+  border: 6px solid transparent;
+  border-top-color: #0f1530;
+}
+.tip.open .tip-content { display: block; }
 .summary-val { word-break: break-word; }
 .summary-val .kind { display: inline-block; font-weight: 700; margin-right: 8px; }
 .summary-val .hint { color: var(--muted); font-size: 12px; margin-top: 3px; }
@@ -310,6 +372,21 @@ main {
   border-radius: 10px;
   padding: 10px;
 }
+figure.fig {
+  margin: 16px 0;
+  padding: 14px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+figure.fig .qr-diagram { background: #fff; margin: 0 auto 8px; }
+figure.fig figcaption {
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+  line-height: 1.5;
+}
+.fig-dark .qr-diagram { background: #0b1020; }
 .cta {
   display: inline-block;
   background: var(--accent);
@@ -320,6 +397,24 @@ main {
   text-decoration: none;
   margin-top: 8px;
 }
+
+.site-footer {
+  padding: 10px 14px calc(14px + env(safe-area-inset-bottom));
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+.site-footer a {
+  color: var(--accent-2);
+  text-decoration: none;
+  margin-left: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.site-footer a:hover { text-decoration: underline; }
 
 @media (max-width: 480px) {
   .summary-row { grid-template-columns: 90px 1fr; gap: 8px; }

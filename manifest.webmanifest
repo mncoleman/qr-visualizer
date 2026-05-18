@@ -1,6 +1,6 @@
 {
-  "name": "QR X-Ray",
-  "short_name": "QR X-Ray",
+  "name": "QR Visualizer",
+  "short_name": "QR Visualizer",
   "description": "See every section of a QR code, live. Camera-based QR anatomy visualizer.",
   "start_url": "./index.html",
   "scope": "./",

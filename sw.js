@@ -1,5 +1,5 @@
-// QR X-Ray service worker — offline-first cache for app shell.
-const VERSION = 'qr-xray-v1';
+// QR Visualizer service worker — offline-first cache for app shell.
+const VERSION = 'qr-vis-v3';
 const APP_SHELL = [
   './',
   './index.html',

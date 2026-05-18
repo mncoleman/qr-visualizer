@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#0b1020" />
-  <title>How QR codes work — QR X-Ray</title>
+  <title>How QR codes work — QR Visualizer</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="css/styles.css" />
@@ -21,7 +21,7 @@
         <span></span><span class="off"></span><span class="off"></span><span class="off"></span><span class="off"></span><span class="off"></span><span></span>
         <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
       </span>
-      QR X-Ray
+      QR Visualizer
     </a>
     <nav>
       <a href="index.html">Scan</a>
@@ -103,6 +103,27 @@
     </ul>
     <p>The more data you encode, the higher the version needed.</p>
 
+    <figure class="fig">
+      <svg class="qr-diagram" viewBox="0 0 240 80" xmlns="http://www.w3.org/2000/svg" aria-label="QR versions get larger as they hold more data">
+        <g transform="translate(8,8)">
+          <rect width="21" height="21" fill="#0b1020"/>
+          <g fill="white"><rect x="2" y="2" width="3" height="3"/><rect x="6" y="2" width="2" height="2"/><rect x="10" y="2" width="3" height="3"/></g>
+          <text x="10.5" y="34" text-anchor="middle" fill="#94a3b8" font-size="6" font-family="sans-serif">V1 · 21×21</text>
+        </g>
+        <g transform="translate(60,8)">
+          <rect width="33" height="33" fill="#0b1020"/>
+          <g fill="white"><rect x="2" y="2" width="3" height="3"/><rect x="6" y="2" width="2" height="2"/><rect x="10" y="2" width="3" height="3"/><rect x="16" y="6" width="3" height="3"/><rect x="22" y="10" width="2" height="2"/></g>
+          <text x="16.5" y="46" text-anchor="middle" fill="#94a3b8" font-size="6" font-family="sans-serif">V4 · 33×33</text>
+        </g>
+        <g transform="translate(125,8)">
+          <rect width="57" height="57" fill="#0b1020"/>
+          <g fill="white"><rect x="2" y="2" width="3" height="3"/><rect x="6" y="2" width="2" height="2"/><rect x="10" y="2" width="3" height="3"/><rect x="16" y="6" width="3" height="3"/><rect x="22" y="10" width="2" height="2"/><rect x="32" y="14" width="3" height="3"/><rect x="40" y="20" width="2" height="2"/><rect x="50" y="28" width="3" height="3"/></g>
+          <text x="28.5" y="70" text-anchor="middle" fill="#94a3b8" font-size="6" font-family="sans-serif">V10 · 57×57</text>
+        </g>
+      </svg>
+      <figcaption>Bigger versions = bigger grid. (Schematic — actual QR codes are filled with structured data.)</figcaption>
+    </figure>
+
     <h2>2. Function patterns</h2>
     <p>Some modules don't carry data — they exist purely to help scanners find and orient the code.</p>
 
@@ -112,6 +133,36 @@
       any line through the center is always <code>1:1:3:1:1</code>. This pattern is mathematically distinctive — even at angles
       and partial occlusion, scanners can detect it reliably.
     </p>
+
+    <figure class="fig">
+      <svg class="qr-diagram" viewBox="0 0 200 110" xmlns="http://www.w3.org/2000/svg" aria-label="Finder pattern ratio 1:1:3:1:1">
+        <!-- 7x7 finder pattern -->
+        <g transform="translate(10,10)">
+          <rect width="70" height="70" fill="#0b1020"/>
+          <rect x="10" y="10" width="50" height="50" fill="white"/>
+          <rect x="20" y="20" width="30" height="30" fill="#0b1020"/>
+        </g>
+        <!-- Scan line through center -->
+        <line x1="0" y1="45" x2="200" y2="45" stroke="#f43f5e" stroke-width="0.6" stroke-dasharray="3 2"/>
+        <!-- Ratio segments labeled -->
+        <g font-family="ui-monospace, monospace" font-size="6" fill="#0b1020">
+          <rect x="100" y="35" width="10" height="20" fill="#0b1020"/>
+          <rect x="110" y="35" width="10" height="20" fill="white" stroke="#94a3b8" stroke-width="0.4"/>
+          <rect x="120" y="35" width="30" height="20" fill="#0b1020"/>
+          <rect x="150" y="35" width="10" height="20" fill="white" stroke="#94a3b8" stroke-width="0.4"/>
+          <rect x="160" y="35" width="10" height="20" fill="#0b1020"/>
+          <text x="105" y="68" text-anchor="middle" fill="#0b1020">1</text>
+          <text x="115" y="68" text-anchor="middle" fill="#0b1020">1</text>
+          <text x="135" y="68" text-anchor="middle" fill="#0b1020">3</text>
+          <text x="155" y="68" text-anchor="middle" fill="#0b1020">1</text>
+          <text x="165" y="68" text-anchor="middle" fill="#0b1020">1</text>
+          <text x="135" y="80" text-anchor="middle" fill="#f43f5e" font-weight="bold">1 : 1 : 3 : 1 : 1</text>
+          <text x="135" y="92" text-anchor="middle" fill="#0b1020">dark : light : dark : light : dark</text>
+        </g>
+      </svg>
+      <figcaption>Any horizontal, vertical, or even diagonal line through a finder pattern hits modules in this exact ratio. Scanners specifically look for this signature.</figcaption>
+    </figure>
+
     <p>Three corners, not four — the missing fourth corner tells the scanner which way is up.</p>
 
     <h3>Separators</h3>
@@ -126,6 +177,45 @@
       The scanner uses them as a ruler — counting the alternations tells it how many modules wide the code is, which
       tells it the version. The timing pattern also anchors the grid when the image is warped or photographed at an angle.
     </p>
+
+    <figure class="fig">
+      <svg class="qr-diagram" viewBox="0 0 210 80" xmlns="http://www.w3.org/2000/svg" aria-label="Timing pattern is an alternating black/white strip">
+        <g transform="translate(5,30)">
+          <!-- Strip with alternating modules -->
+          <g>
+            <rect x="0"  y="0" width="10" height="10" fill="#0b1020"/>
+            <rect x="10" y="0" width="10" height="10" fill="white" stroke="#94a3b8" stroke-width="0.3"/>
+            <rect x="20" y="0" width="10" height="10" fill="#0b1020"/>
+            <rect x="30" y="0" width="10" height="10" fill="white" stroke="#94a3b8" stroke-width="0.3"/>
+            <rect x="40" y="0" width="10" height="10" fill="#0b1020"/>
+            <rect x="50" y="0" width="10" height="10" fill="white" stroke="#94a3b8" stroke-width="0.3"/>
+            <rect x="60" y="0" width="10" height="10" fill="#0b1020"/>
+            <rect x="70" y="0" width="10" height="10" fill="white" stroke="#94a3b8" stroke-width="0.3"/>
+            <rect x="80" y="0" width="10" height="10" fill="#0b1020"/>
+            <rect x="90" y="0" width="10" height="10" fill="white" stroke="#94a3b8" stroke-width="0.3"/>
+            <rect x="100" y="0" width="10" height="10" fill="#0b1020"/>
+            <rect x="110" y="0" width="10" height="10" fill="white" stroke="#94a3b8" stroke-width="0.3"/>
+            <rect x="120" y="0" width="10" height="10" fill="#0b1020"/>
+            <rect x="130" y="0" width="10" height="10" fill="white" stroke="#94a3b8" stroke-width="0.3"/>
+            <rect x="140" y="0" width="10" height="10" fill="#0b1020"/>
+            <rect x="150" y="0" width="10" height="10" fill="white" stroke="#94a3b8" stroke-width="0.3"/>
+            <rect x="160" y="0" width="10" height="10" fill="#0b1020"/>
+            <rect x="170" y="0" width="10" height="10" fill="white" stroke="#94a3b8" stroke-width="0.3"/>
+            <rect x="180" y="0" width="10" height="10" fill="#0b1020"/>
+            <rect x="190" y="0" width="10" height="10" fill="white" stroke="#94a3b8" stroke-width="0.3"/>
+          </g>
+          <!-- Tick marks above -->
+          <g stroke="#22c55e" stroke-width="0.5" font-family="ui-monospace, monospace" font-size="5" fill="#22c55e">
+            <line x1="5" y1="-5" x2="5" y2="-1"/><text x="5" y="-8" text-anchor="middle">1</text>
+            <line x1="55" y1="-5" x2="55" y2="-1"/><text x="55" y="-8" text-anchor="middle">6</text>
+            <line x1="105" y1="-5" x2="105" y2="-1"/><text x="105" y="-8" text-anchor="middle">11</text>
+            <line x1="155" y1="-5" x2="155" y2="-1"/><text x="155" y="-8" text-anchor="middle">16</text>
+          </g>
+          <text x="100" y="30" text-anchor="middle" fill="#0b1020" font-family="sans-serif" font-size="6">count alternations → know the version</text>
+        </g>
+      </svg>
+      <figcaption>Strictly alternating modules act as a coordinate ruler. If a scanner can find both timing patterns, it can map every module in the QR.</figcaption>
+    </figure>
 
     <h3>Alignment patterns</h3>
     <p>
@@ -170,6 +260,74 @@
       The goal: avoid large runs of dark or light modules, avoid accidentally forming finder-pattern-like ratios in the data,
       and balance overall darkness. A QR generator tries all 8 masks, scores them with a penalty function, and picks the best.
     </p>
+
+    <figure class="fig">
+      <svg class="qr-diagram" viewBox="0 0 260 130" xmlns="http://www.w3.org/2000/svg" aria-label="The 8 QR mask patterns">
+        <!-- Render 8 16x16 mask previews -->
+        <g font-family="ui-monospace, monospace" font-size="7" fill="#0b1020">
+          <script/>
+        </g>
+        <!-- We'll just hand-author 8 little patches -->
+        <g id="masks"></g>
+      </svg>
+      <figcaption>Each of the 8 mask patterns produces a distinct repeating texture. The encoder picks whichever produces the lowest "penalty score" after applying it.</figcaption>
+    </figure>
+    <script>
+      // Render the 8 mask patterns inline so they're driven by the actual formulas.
+      (function () {
+        const formulas = [
+          (r, c) => (r + c) % 2 === 0,
+          (r) => r % 2 === 0,
+          (r, c) => c % 3 === 0,
+          (r, c) => (r + c) % 3 === 0,
+          (r, c) => (Math.floor(r / 2) + Math.floor(c / 3)) % 2 === 0,
+          (r, c) => ((r * c) % 2 + (r * c) % 3) === 0,
+          (r, c) => (((r * c) % 2 + (r * c) % 3) % 2) === 0,
+          (r, c) => (((r + c) % 2 + (r * c) % 3) % 2) === 0,
+        ];
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const root = document.getElementById('masks');
+        if (!root) return;
+        const N = 12; // module count per side
+        const cell = 4;
+        for (let m = 0; m < 8; m++) {
+          const col = m % 4;
+          const row = Math.floor(m / 4);
+          const ox = 4 + col * 64;
+          const oy = 4 + row * 62;
+          const g = document.createElementNS(svgNS, 'g');
+          g.setAttribute('transform', `translate(${ox} ${oy})`);
+          const bg = document.createElementNS(svgNS, 'rect');
+          bg.setAttribute('width', String(N * cell));
+          bg.setAttribute('height', String(N * cell));
+          bg.setAttribute('fill', 'white');
+          g.appendChild(bg);
+          for (let r = 0; r < N; r++) {
+            for (let c = 0; c < N; c++) {
+              if (formulas[m](r, c)) {
+                const rect = document.createElementNS(svgNS, 'rect');
+                rect.setAttribute('x', String(c * cell));
+                rect.setAttribute('y', String(r * cell));
+                rect.setAttribute('width', String(cell));
+                rect.setAttribute('height', String(cell));
+                rect.setAttribute('fill', '#0b1020');
+                g.appendChild(rect);
+              }
+            }
+          }
+          const label = document.createElementNS(svgNS, 'text');
+          label.setAttribute('x', String(N * cell / 2));
+          label.setAttribute('y', String(N * cell + 8));
+          label.setAttribute('text-anchor', 'middle');
+          label.setAttribute('font-family', 'ui-monospace, monospace');
+          label.setAttribute('font-size', '7');
+          label.setAttribute('fill', '#0b1020');
+          label.textContent = `Mask ${m}`;
+          g.appendChild(label);
+          root.appendChild(g);
+        }
+      })();
+    </script>
     <p>The 8 masks (a module at row, col is flipped when the formula is true):</p>
     <ul>
       <li>Mask 0: <code>(row + col) mod 2 == 0</code></li>
@@ -208,6 +366,75 @@
       vertical channels, snaking back and forth, skipping over function patterns. Inside each 2-column channel, bits are
       placed right-bit-first, then left-bit, then up to the next row.
     </p>
+
+    <figure class="fig">
+      <svg class="qr-diagram" viewBox="0 0 250 250" xmlns="http://www.w3.org/2000/svg" aria-label="QR codeword placement zigzag">
+        <g id="zigzag"></g>
+      </svg>
+      <figcaption>Reading order on a Version-2 QR (25×25). Bottom-right is bit 0. The path snakes up, hops over function patterns (greyed), then comes back down two columns over. Skips column 6 entirely.</figcaption>
+    </figure>
+    <script>
+      // Render the actual zigzag read path for a V2 QR for illustration.
+      (async function () {
+        try {
+          const mod = await import('./js/qr-anatomy.js');
+          const grid = mod.buildModuleMap(2);
+          const path = mod.computeReadPath(grid);
+          const size = grid.size; // 25
+          const cell = 240 / size;
+          const svgNS = 'http://www.w3.org/2000/svg';
+          const root = document.getElementById('zigzag');
+          if (!root) return;
+          // Background grid + function patterns
+          for (let r = 0; r < size; r++) {
+            for (let c = 0; c < size; c++) {
+              const t = grid.map[r][c].type;
+              const rect = document.createElementNS(svgNS, 'rect');
+              rect.setAttribute('x', String(5 + c * cell));
+              rect.setAttribute('y', String(5 + r * cell));
+              rect.setAttribute('width', String(cell));
+              rect.setAttribute('height', String(cell));
+              if (t === 'data') {
+                rect.setAttribute('fill', '#fff');
+                rect.setAttribute('stroke', '#e5e7eb');
+                rect.setAttribute('stroke-width', '0.2');
+              } else {
+                rect.setAttribute('fill', '#cbd5e1');
+              }
+              root.appendChild(rect);
+            }
+          }
+          // The zigzag polyline through data module centers
+          const points = path.map(([r, c]) => `${5 + c * cell + cell/2},${5 + r * cell + cell/2}`).join(' ');
+          const pl = document.createElementNS(svgNS, 'polyline');
+          pl.setAttribute('points', points);
+          pl.setAttribute('fill', 'none');
+          pl.setAttribute('stroke', '#f43f5e');
+          pl.setAttribute('stroke-width', '0.8');
+          pl.setAttribute('stroke-linejoin', 'round');
+          pl.setAttribute('opacity', '0.85');
+          root.appendChild(pl);
+          // Mark start
+          const start = document.createElementNS(svgNS, 'circle');
+          const [sr, sc] = path[0];
+          start.setAttribute('cx', String(5 + sc * cell + cell/2));
+          start.setAttribute('cy', String(5 + sr * cell + cell/2));
+          start.setAttribute('r', '2');
+          start.setAttribute('fill', '#22c55e');
+          root.appendChild(start);
+          const lbl = document.createElementNS(svgNS, 'text');
+          lbl.setAttribute('x', String(5 + sc * cell - 12));
+          lbl.setAttribute('y', String(5 + sr * cell + cell + 4));
+          lbl.setAttribute('font-family', 'ui-monospace, monospace');
+          lbl.setAttribute('font-size', '6');
+          lbl.setAttribute('fill', '#22c55e');
+          lbl.textContent = 'start';
+          root.appendChild(lbl);
+        } catch (e) {
+          console.warn('Zigzag illustration failed', e);
+        }
+      })();
+    </script>
 
     <h3>Encoding modes</h3>
     <p>The 4-bit mode indicator at the start of the data tells the scanner how to interpret the bits that follow:</p>
@@ -263,6 +490,14 @@
       <li><a href="https://www.nayuki.io/page/creating-a-qr-code-step-by-step" target="_blank" rel="noopener">Nayuki's interactive QR builder</a> — adjustable step-by-step encoder.</li>
     </ul>
   </main>
+
+  <footer class="site-footer">
+    <span>Open source on GitHub —</span>
+    <a href="https://github.com/mncoleman/qr-visualizer" target="_blank" rel="noopener noreferrer">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.55 0-.27-.01-.99-.02-1.94-3.2.69-3.87-1.54-3.87-1.54-.52-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.78 1.19 1.78 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.04 0 0 .97-.31 3.18 1.18.92-.26 1.91-.39 2.89-.39.98 0 1.97.13 2.89.39 2.21-1.49 3.18-1.18 3.18-1.18.63 1.58.23 2.75.11 3.04.74.81 1.19 1.84 1.19 3.1 0 4.43-2.7 5.41-5.27 5.7.41.36.78 1.06.78 2.14 0 1.55-.01 2.8-.01 3.18 0 .31.21.67.8.55C20.21 21.38 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5z"/></svg>
+      mncoleman/qr-visualizer
+    </a>
+  </footer>
 
   <script>
     if ('serviceWorker' in navigator) {

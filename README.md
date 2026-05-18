@@ -1,4 +1,4 @@
-# QR X-Ray
+# QR Visualizer
 
 A camera-based QR code anatomy visualizer. Point your phone at a QR code and every section lights up — finder patterns, timing patterns, alignment patterns, format info, data + ECC. Tap any region to read what it is and what it does in *this* code.
 

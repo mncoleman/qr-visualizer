@@ -1,6 +1,6 @@
-// QR X-Ray — live camera QR scanner with anatomy overlay.
+// QR Visualizer — live camera QR scanner with anatomy overlay rendered every frame.
 
-import { buildModuleMap, groupRegions, COLORS, T } from './qr-anatomy.js';
+import { buildModuleMap, groupRegions, computeReadPath, COLORS, T } from './qr-anatomy.js';
 import {
   moduleCorners,
   sampleBitMatrix,
@@ -11,15 +11,13 @@ import {
 } from './decoder.js';
 import { EXPLANATIONS, MODE_INFO } from './explanations.js';
 
-// jsQR is loaded globally via <script src="js/jsQR.js">
 const jsQR = window.jsQR;
 
 // --- DOM refs ---
 const video = document.getElementById('video');
-const captureCanvas = document.getElementById('capture');         // visible frozen frame
-const overlayCanvas = document.getElementById('overlay');         // drawn regions
-const hitCanvas = document.createElement('canvas');               // off-screen region IDs
-const scanCanvas = document.createElement('canvas');              // off-screen scan buffer
+const captureCanvas = document.getElementById('capture');
+const overlayCanvas = document.getElementById('overlay');
+const scanCanvas = document.createElement('canvas'); // offscreen
 const statusEl = document.getElementById('status');
 const sheet = document.getElementById('sheet');
 const sheetTitle = document.getElementById('sheet-title');
@@ -31,14 +29,25 @@ const fileInput = document.getElementById('file-input');
 const summary = document.getElementById('summary');
 const legendBtn = document.getElementById('legend-btn');
 const legend = document.getElementById('legend');
+const readPathBtn = document.getElementById('readpath-btn');
 
 // --- State ---
 let stream = null;
+let mode = 'live';            // 'live' (camera) | 'still' (uploaded image)
 let scanning = false;
-let frozen = false;
-let currentRegions = [];     // [{type, role, cells, ...}]
-let regionIndexByPixel = null; // Uint32Array of length width*height — region index + 1, or 0
-let qrInfo = null;            // { version, size, location, data, formatInfo, mode, chunks, ... }
+
+// Latest detection data driving the overlay; null when no QR currently tracked.
+let qrInfo = null;            // { version, size, location, data, chunks, formatInfo }
+let regions = [];             // grouped regions from the module map (cached per version)
+let regionsByVersion = new Map();
+let readPathByVersion = new Map();
+let openRegionType = null;    // type currently open in the sheet — kept synced as QR changes
+let readPathOn = false;
+let readPath = [];            // current QR's path
+
+// "Recently saw a QR" hysteresis — keeps overlay & summary visible across brief misses.
+const TRACK_TIMEOUT_MS = 600;
+let lastSeenAt = 0;
 
 // --- Camera ---
 async function startCamera() {
@@ -51,7 +60,9 @@ async function startCamera() {
     video.srcObject = stream;
     await video.play();
     statusEl.textContent = 'Point camera at a QR code';
+    mode = 'live';
     scanning = true;
+    syncOverlaySize();
     requestAnimationFrame(scanLoop);
   } catch (err) {
     console.error(err);
@@ -68,114 +79,178 @@ function stopCamera() {
   scanning = false;
 }
 
-// --- Scan loop ---
-function scanLoop() {
-  if (!scanning || frozen) return;
+// Match overlay canvas dimensions to the video's intrinsic frame so coords line up.
+function syncOverlaySize() {
+  if (mode !== 'live') return;
+  if (video.videoWidth > 0 && (overlayCanvas.width !== video.videoWidth || overlayCanvas.height !== video.videoHeight)) {
+    overlayCanvas.width = video.videoWidth;
+    overlayCanvas.height = video.videoHeight;
+  }
+}
+
+// --- Plausibility check (filters jsQR's false positives on noisy frames) ---
+function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+
+function isPlausibleDetection(result, frameW, frameH) {
+  if (!result.data && (!result.chunks || result.chunks.length === 0)) return false;
+  const { topLeftCorner: tl, topRightCorner: tr, bottomLeftCorner: bl, bottomRightCorner: br } = result.location;
+  const sides = [dist(tl, tr), dist(tr, br), dist(br, bl), dist(bl, tl)];
+  const minSide = Math.min(...sides);
+  const maxSide = Math.max(...sides);
+  if (minSide < 30) return false;
+  if (maxSide / minSide > 3.5) return false;
+  if (minSide > Math.max(frameW, frameH)) return false;
+  const d1 = dist(tl, br);
+  const d2 = dist(tr, bl);
+  if (Math.max(d1, d2) / Math.min(d1, d2) > 2.5) return false;
+  const pts = [tl, tr, br, bl];
+  let area = 0;
+  for (let i = 0; i < 4; i++) {
+    const a = pts[i], b = pts[(i + 1) % 4];
+    area += a.x * b.y - b.x * a.y;
+  }
+  area = Math.abs(area) / 2;
+  if (area < minSide * minSide * 0.4) return false;
+  return true;
+}
+
+// Cache module maps per version so we don't rebuild every frame.
+function getRegionsForVersion(version) {
+  if (regionsByVersion.has(version)) return regionsByVersion.get(version);
+  const grid = buildModuleMap(version);
+  const grouped = groupRegions(grid);
+  const path = computeReadPath(grid);
+  regionsByVersion.set(version, { size: grid.size, regions: grouped });
+  readPathByVersion.set(version, path);
+  return regionsByVersion.get(version);
+}
+
+function getReadPath(version) {
+  if (!readPathByVersion.has(version)) getRegionsForVersion(version);
+  return readPathByVersion.get(version);
+}
+
+// --- Per-frame scan + draw loop ---
+let lastFormatInfoVersion = -1;
+
+function scanLoop(ts) {
+  if (!scanning) return;
   if (video.readyState >= 2 && video.videoWidth > 0) {
-    const w = video.videoWidth;
-    const h = video.videoHeight;
+    syncOverlaySize();
+    const w = video.videoWidth, h = video.videoHeight;
     scanCanvas.width = w;
     scanCanvas.height = h;
     const ctx = scanCanvas.getContext('2d', { willReadFrequently: true });
     ctx.drawImage(video, 0, 0, w, h);
     const img = ctx.getImageData(0, 0, w, h);
-    const result = jsQR(img.data, w, h, { inversionAttempts: 'attemptBoth' });
-    if (result) {
-      freezeOnDetection(img, result);
-      return;
+    // dontInvert is significantly faster — we can afford running every frame.
+    const result = jsQR(img.data, w, h, { inversionAttempts: 'dontInvert' });
+
+    if (result && isPlausibleDetection(result, w, h)) {
+      const version = result.version || 1;
+      const { size, regions: grouped } = getRegionsForVersion(version);
+
+      // Decode format info only on first lock / version change (it's the costly part).
+      let formatInfo = qrInfo?.formatInfo || null;
+      if (!qrInfo || qrInfo.version !== version || qrInfo.data !== result.data) {
+        try {
+          const bm = sampleBitMatrix(img, result.location, size);
+          formatInfo = decodeFormatInfo(bm, size);
+        } catch {}
+      }
+
+      qrInfo = {
+        version,
+        size,
+        location: result.location,
+        data: result.data,
+        chunks: result.chunks,
+        formatInfo,
+      };
+      regions = grouped;
+      readPath = getReadPath(version);
+      lastSeenAt = ts || performance.now();
+      statusEl.textContent = `Tracking — version ${version} (${size}×${size})  ·  tap a section`;
+      document.body.classList.add('tracking');
+      renderSummary();
+      drawOverlay();
+      // Keep the open sheet content synced to the latest detection.
+      if (openRegionType) refreshOpenSheet();
+    } else {
+      // No detection this frame — clear overlay only after timeout (anti-flicker)
+      const now = ts || performance.now();
+      if (qrInfo && now - lastSeenAt > TRACK_TIMEOUT_MS) {
+        qrInfo = null;
+        regions = [];
+        clearOverlay();
+        summary.hidden = true;
+        statusEl.textContent = 'Point camera at a QR code';
+        document.body.classList.remove('tracking');
+      }
     }
   }
   requestAnimationFrame(scanLoop);
 }
 
-// --- Freeze + analyze ---
-function freezeOnDetection(imageData, result) {
-  frozen = true;
-  scanning = false;
-  const w = imageData.width;
-  const h = imageData.height;
-
-  // Render the frozen frame at element-fit size
-  captureCanvas.width = w;
-  captureCanvas.height = h;
-  overlayCanvas.width = w;
-  overlayCanvas.height = h;
-  hitCanvas.width = w;
-  hitCanvas.height = h;
-  const capCtx = captureCanvas.getContext('2d');
-  capCtx.putImageData(imageData, 0, 0);
-
-  // Hide video, show frozen
-  video.style.display = 'none';
-  captureCanvas.style.display = 'block';
-  overlayCanvas.style.display = 'block';
-  resumeBtn.hidden = false;
-
-  // Determine version from jsQR's reported size, fallback to estimating
-  // jsQR returns `version` on the result object.
-  const version = result.version || 1;
-  const grid = buildModuleMap(version);
-  const regions = groupRegions(grid);
-  currentRegions = regions;
-
-  // Try to re-sample bit matrix and decode format info
-  let formatInfo = null;
-  try {
-    const bm = sampleBitMatrix(imageData, result.location, grid.size);
-    formatInfo = decodeFormatInfo(bm, grid.size);
-  } catch (e) {
-    console.warn('Format info read failed', e);
-  }
-
-  qrInfo = {
-    version,
-    size: grid.size,
-    location: result.location,
-    data: result.data,
-    binaryData: result.binaryData,
-    chunks: result.chunks,
-    formatInfo,
-  };
-
-  drawOverlay();
-  buildHitBuffer();
-  renderSummary();
-
-  statusEl.textContent = `QR detected — version ${version} (${grid.size}×${grid.size} modules)`;
+function clearOverlay() {
+  const ctx = overlayCanvas.getContext('2d');
+  ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
 }
 
-// --- Draw overlay polygons per region ---
+function moduleCenter(r, c) {
+  const cn = moduleCorners(qrInfo.location, qrInfo.size, r, c);
+  return { x: (cn[0].x + cn[2].x) / 2, y: (cn[0].y + cn[2].y) / 2 };
+}
+
+// How many on-screen pixels does one QR module span right now?
+// Used to decide whether to draw arrows / numbers (only when zoomed in).
+function moduleScreenSize() {
+  if (!qrInfo) return 0;
+  const c0 = moduleCenter(0, 0);
+  const c1 = moduleCenter(0, 1);
+  const canvasPx = Math.hypot(c1.x - c0.x, c1.y - c0.y);
+  // Convert canvas pixels → CSS pixels using the same scaling as clientToCanvas.
+  const rect = overlayCanvas.getBoundingClientRect();
+  const cw = overlayCanvas.width, ch = overlayCanvas.height;
+  if (!cw || !ch) return canvasPx;
+  const scale = Math.min(rect.width / cw, rect.height / ch);
+  return canvasPx * scale;
+}
+
 function drawOverlay() {
+  if (!qrInfo) return;
   const ctx = overlayCanvas.getContext('2d');
   ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
 
-  // Group cells into one Path2D per region for filling, then thin outline per region.
-  for (const region of currentRegions) {
+  if (readPathOn) drawReadPath(ctx);
+  else drawRegions(ctx);
+}
+
+function drawRegions(ctx) {
+  // Pass 1: fill each region's cells
+  for (const region of regions) {
     const color = COLORS[region.type];
     if (!color) continue;
-
-    // Fill each cell as a filled quad
     ctx.fillStyle = color.fill;
     ctx.beginPath();
     for (const [r, c] of region.cells) {
-      const corners = moduleCorners(qrInfo.location, qrInfo.size, r, c);
-      ctx.moveTo(corners[0].x, corners[0].y);
-      ctx.lineTo(corners[1].x, corners[1].y);
-      ctx.lineTo(corners[2].x, corners[2].y);
-      ctx.lineTo(corners[3].x, corners[3].y);
+      const cn = moduleCorners(qrInfo.location, qrInfo.size, r, c);
+      ctx.moveTo(cn[0].x, cn[0].y);
+      ctx.lineTo(cn[1].x, cn[1].y);
+      ctx.lineTo(cn[2].x, cn[2].y);
+      ctx.lineTo(cn[3].x, cn[3].y);
       ctx.closePath();
     }
     ctx.fill();
   }
 
-  // Thicker outlines on top for the high-interest functional regions
-  for (const region of currentRegions) {
+  // Pass 2: outline non-data regions for clarity
+  for (const region of regions) {
     if (region.type === T.DATA) continue;
     const color = COLORS[region.type];
     if (!color) continue;
     ctx.strokeStyle = color.stroke;
     ctx.lineWidth = 1.5;
-    // Bounding rectangle of region cells, as a polygon in image space
     const rows = region.cells.map((c) => c[0]);
     const cols = region.cells.map((c) => c[1]);
     const r0 = Math.min(...rows);
@@ -196,51 +271,111 @@ function drawOverlay() {
   }
 }
 
-// --- Build off-screen hit-test buffer (color = region index + 1) ---
-function buildHitBuffer() {
-  const ctx = hitCanvas.getContext('2d');
-  ctx.clearRect(0, 0, hitCanvas.width, hitCanvas.height);
-  // Use a simple integer-to-color encoding
-  for (let i = 0; i < currentRegions.length; i++) {
-    const region = currentRegions[i];
-    const id = i + 1;
-    const r = (id >> 16) & 0xff;
-    const g = (id >> 8) & 0xff;
-    const b = id & 0xff;
-    ctx.fillStyle = `rgb(${r},${g},${b})`;
+// Read-path overlay: color each data module by its codeword (8 bits = 1 byte),
+// and draw an arrowed polyline showing the placement order. When the on-screen
+// module size is large enough, draw numbered bits too.
+function drawReadPath(ctx) {
+  const screenPx = moduleScreenSize();
+  const showArrows = screenPx >= 14;
+  const showNumbers = screenPx >= 28;
+
+  // Step 1: dim the function patterns so read-path stands out.
+  for (const region of regions) {
+    if (region.type === T.DATA) continue;
+    ctx.fillStyle = 'rgba(40, 50, 80, 0.55)';
     ctx.beginPath();
-    for (const [rr, cc] of region.cells) {
-      const corners = moduleCorners(qrInfo.location, qrInfo.size, rr, cc);
-      ctx.moveTo(corners[0].x, corners[0].y);
-      ctx.lineTo(corners[1].x, corners[1].y);
-      ctx.lineTo(corners[2].x, corners[2].y);
-      ctx.lineTo(corners[3].x, corners[3].y);
+    for (const [r, c] of region.cells) {
+      const cn = moduleCorners(qrInfo.location, qrInfo.size, r, c);
+      ctx.moveTo(cn[0].x, cn[0].y);
+      ctx.lineTo(cn[1].x, cn[1].y);
+      ctx.lineTo(cn[2].x, cn[2].y);
+      ctx.lineTo(cn[3].x, cn[3].y);
       ctx.closePath();
     }
     ctx.fill();
   }
+
+  // Step 2: color each data module by codeword index using an HSL cycle.
+  for (let i = 0; i < readPath.length; i++) {
+    const [r, c] = readPath[i];
+    const codeword = Math.floor(i / 8);
+    const hue = (codeword * 41) % 360;
+    const cn = moduleCorners(qrInfo.location, qrInfo.size, r, c);
+    ctx.fillStyle = `hsla(${hue}, 80%, 55%, 0.65)`;
+    ctx.beginPath();
+    ctx.moveTo(cn[0].x, cn[0].y);
+    ctx.lineTo(cn[1].x, cn[1].y);
+    ctx.lineTo(cn[2].x, cn[2].y);
+    ctx.lineTo(cn[3].x, cn[3].y);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Step 3: arrowed polyline through bit centers (only when zoomed in).
+  if (showArrows) {
+    ctx.lineWidth = Math.max(1, screenPx / 14);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    const first = moduleCenter(readPath[0][0], readPath[0][1]);
+    ctx.moveTo(first.x, first.y);
+    for (let i = 1; i < readPath.length; i++) {
+      const p = moduleCenter(readPath[i][0], readPath[i][1]);
+      ctx.lineTo(p.x, p.y);
+    }
+    ctx.stroke();
+
+    // Arrowheads on codeword boundaries
+    const headSize = Math.max(4, screenPx * 0.45);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+    for (let i = 8; i < readPath.length; i += 8) {
+      const a = moduleCenter(readPath[i - 1][0], readPath[i - 1][1]);
+      const b = moduleCenter(readPath[i][0], readPath[i][1]);
+      const ang = Math.atan2(b.y - a.y, b.x - a.x);
+      ctx.beginPath();
+      ctx.moveTo(b.x, b.y);
+      ctx.lineTo(b.x - headSize * Math.cos(ang - 0.4), b.y - headSize * Math.sin(ang - 0.4));
+      ctx.lineTo(b.x - headSize * Math.cos(ang + 0.4), b.y - headSize * Math.sin(ang + 0.4));
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  // Step 4: per-bit numbers (only when extremely zoomed in).
+  if (showNumbers) {
+    const fontSize = Math.max(8, Math.round(screenPx * 0.45));
+    ctx.font = `bold ${fontSize}px ui-monospace, Menlo, monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+    for (let i = 0; i < readPath.length; i++) {
+      const p = moduleCenter(readPath[i][0], readPath[i][1]);
+      const bit = i % 8;
+      const cw = Math.floor(i / 8);
+      ctx.fillText(`${cw}.${bit}`, p.x, p.y);
+    }
+  }
 }
 
-// --- Click → identify region ---
-function handleOverlayClick(e) {
-  if (!frozen || !qrInfo) return;
-  const rect = overlayCanvas.getBoundingClientRect();
-  // Map client coords → canvas pixel coords (account for object-fit: contain)
-  const point = clientToCanvas(e.clientX, e.clientY, rect);
-  if (!point) return;
-
-  const ctx = hitCanvas.getContext('2d', { willReadFrequently: true });
-  const data = ctx.getImageData(Math.round(point.x), Math.round(point.y), 1, 1).data;
-  const id = (data[0] << 16) | (data[1] << 8) | data[2];
-  if (id === 0) return;
-  const region = currentRegions[id - 1];
-  if (region) showRegionInfo(region);
+// --- Click → identify region via point-in-polygon over module quads ---
+function pointInQuad(p, q) {
+  // q = [TL, TR, BR, BL]. Cross-product sign test for convex quad.
+  let sign = 0;
+  for (let i = 0; i < 4; i++) {
+    const a = q[i], b = q[(i + 1) % 4];
+    const cross = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+    if (cross === 0) continue;
+    if (sign === 0) sign = cross > 0 ? 1 : -1;
+    else if ((cross > 0 ? 1 : -1) !== sign) return false;
+  }
+  return true;
 }
 
 function clientToCanvas(clientX, clientY, rect) {
-  // Canvas displayed via CSS object-fit: contain. Recompute scale.
   const cw = overlayCanvas.width;
   const ch = overlayCanvas.height;
+  if (!cw || !ch) return null;
   const containerW = rect.width;
   const containerH = rect.height;
   const scale = Math.min(containerW / cw, containerH / ch);
@@ -254,40 +389,74 @@ function clientToCanvas(clientX, clientY, rect) {
   return { x: px, y: py };
 }
 
-// --- Info sheet ---
+function findRegionAt(point) {
+  if (!qrInfo) return null;
+  // Iterate regions, then cells. Stop at first hit.
+  for (const region of regions) {
+    for (const [r, c] of region.cells) {
+      const quad = moduleCorners(qrInfo.location, qrInfo.size, r, c);
+      if (pointInQuad(point, quad)) return region;
+    }
+  }
+  return null;
+}
+
+function handleOverlayClick(e) {
+  if (!qrInfo) return;
+  const rect = overlayCanvas.getBoundingClientRect();
+  const point = clientToCanvas(e.clientX, e.clientY, rect);
+  if (!point) return;
+  const region = findRegionAt(point);
+  if (region) showRegionInfo(region);
+}
+
+// --- Bottom sheet ---
 function showRegionInfo(region) {
+  openRegionType = region.type;
   const exp = EXPLANATIONS[region.type] || EXPLANATIONS[T.DATA];
   sheetTitle.textContent = exp.title;
   sheetShort.textContent = exp.short;
   let body = exp.body;
-
-  // Region-specific addendum
-  if (region.type === T.FORMAT && qrInfo.formatInfo) {
+  if (region.type === T.FORMAT && qrInfo?.formatInfo) {
     const f = qrInfo.formatInfo;
     body += `\n\n— In this QR code —\nError correction level: ${f.ecLevel} (${f.recovery} of codewords recoverable)\nMask pattern: ${f.mask}  —  ${MASK_FORMULAS[f.mask]}`;
   }
-  if (region.type === T.DARK) {
+  if (region.type === T.DARK && qrInfo) {
     body += `\n\n— In this QR code —\nThis module is at row ${4 * qrInfo.version + 9}, column 8.`;
   }
   if (region.type === T.ALIGNMENT && region.sub) {
     body += `\n\n— In this QR code —\nCentered at row,col = ${region.sub}.`;
   }
-  if (region.type === T.VERSION) {
+  if (region.type === T.VERSION && qrInfo) {
     body += `\n\n— In this QR code —\nVersion ${qrInfo.version} (${qrInfo.size}×${qrInfo.size} modules).`;
   }
-  if (region.type === T.DATA) {
+  if (region.type === T.DATA && qrInfo) {
     body += `\n\n— In this QR code —\nDecoded payload: ${qrInfo.data || '(empty)'}`;
   }
   sheetBody.textContent = body;
   sheet.classList.add('open');
 }
 
-function closeSheet() {
-  sheet.classList.remove('open');
+function refreshOpenSheet() {
+  // Find any region of the currently-open type and re-render its info
+  // (keeps live-updating values like format info accurate as we re-detect).
+  if (!openRegionType) return;
+  const region = regions.find((r) => r.type === openRegionType);
+  if (region) {
+    const exp = EXPLANATIONS[openRegionType] || EXPLANATIONS[T.DATA];
+    sheetTitle.textContent = exp.title;
+    sheetShort.textContent = exp.short;
+  }
 }
 
-// --- Summary card (always visible when frozen) ---
+function closeSheet() {
+  sheet.classList.remove('open');
+  openRegionType = null;
+}
+
+// --- Summary card ---
 function renderSummary() {
+  if (!qrInfo) { summary.hidden = true; return; }
   const interp = interpretContent(qrInfo.data);
   const chunks = summarizeChunks(qrInfo.chunks);
   const f = qrInfo.formatInfo;
@@ -295,75 +464,64 @@ function renderSummary() {
   const escape = (s) =>
     String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-  const modeBadges = chunks
-    .map((c) => `<span class="badge">${escape(c.mode)}</span>`)
-    .join('');
+  const modeBadges = chunks.map((c) => `<span class="badge">${escape(c.mode)}</span>`).join('');
 
   let interpHtml = '';
   if (interp.kind === 'url') {
     interpHtml = `<a href="${escape(interp.url)}" target="_blank" rel="noopener noreferrer">${escape(interp.url)}</a><div class="hint">${escape(interp.detail)}</div>`;
-  } else if (interp.kind === 'wifi') {
-    interpHtml = `<div>${escape(interp.detail)}</div>`;
   } else {
     interpHtml = `<div>${escape(interp.detail)}</div>`;
   }
 
+  const tip = (label, body) =>
+    `<div class="summary-label">${label}<span class="tip"><button type="button" class="tip-btn" aria-label="What is this?" data-tip-toggle>i</button><span class="tip-content">${body}</span></span></div>`;
+
   summary.innerHTML = `
     <div class="summary-row">
-      <div class="summary-label">Translated</div>
+      ${tip('Translated', 'A friendlier interpretation of the raw payload. We auto-detect URLs, Wi-Fi configs, email links, phone numbers, vCards, and calendar events.')}
       <div class="summary-val">
         <span class="kind">${escape(interp.label)}</span>
         ${interpHtml}
       </div>
     </div>
     <div class="summary-row">
-      <div class="summary-label">Raw content</div>
+      ${tip('Raw content', 'The exact bytes encoded in the QR code, before any interpretation. This is what your phone scanner would hand to whatever app opens the result.')}
       <div class="summary-val mono">${escape(qrInfo.data || '(empty)')}</div>
     </div>
     <div class="summary-row">
-      <div class="summary-label">Encoding</div>
+      ${tip('Encoding', 'Which QR encoding mode was used to compress the payload into bits. Numeric is most efficient (3 digits per 10 bits); byte mode is the most general (1 byte per 8 bits).')}
       <div class="summary-val">${modeBadges || '<span class="badge">unknown</span>'}
         ${chunks.length === 1 ? `<div class="hint">${escape(MODE_INFO[chunks[0].mode] || '')}</div>` : ''}
       </div>
     </div>
     <div class="summary-row">
-      <div class="summary-label">Version</div>
+      ${tip('Version', 'QR codes come in versions 1–40. Each version up adds 4 modules per side. The grid size is 17 + 4·version.')}
       <div class="summary-val">${qrInfo.version} — ${qrInfo.size}×${qrInfo.size} modules</div>
     </div>
     ${f ? `
     <div class="summary-row">
-      <div class="summary-label">Error correction</div>
+      ${tip('Error correction', 'Reed-Solomon redundancy level. L recovers ~7%, M ~15%, Q ~25%, H ~30% of damaged codewords. Higher levels make the QR larger but more robust.')}
       <div class="summary-val">Level ${f.ecLevel} (${f.recovery} recoverable)</div>
     </div>
     <div class="summary-row">
-      <div class="summary-label">Mask pattern</div>
+      ${tip('Mask pattern', 'After data is placed, one of 8 mask patterns is XORed onto the data modules to avoid large dark/light runs that confuse scanners. The pattern used is recorded in the format info.')}
       <div class="summary-val">${f.mask} — <span class="mono">${escape(MASK_FORMULAS[f.mask])}</span></div>
     </div>` : ''}
   `;
+  // Wire tooltip toggles
+  summary.querySelectorAll('[data-tip-toggle]').forEach((btn) => {
+    btn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const wrap = btn.parentElement;
+      const wasOpen = wrap.classList.contains('open');
+      summary.querySelectorAll('.tip.open').forEach((t) => t.classList.remove('open'));
+      if (!wasOpen) wrap.classList.add('open');
+    });
+  });
   summary.hidden = false;
 }
 
-// --- Resume scanning ---
-function resumeScan() {
-  frozen = false;
-  qrInfo = null;
-  currentRegions = [];
-  summary.hidden = true;
-  resumeBtn.hidden = true;
-  closeSheet();
-  video.style.display = 'block';
-  captureCanvas.style.display = 'none';
-  overlayCanvas.style.display = 'none';
-  statusEl.textContent = 'Point camera at a QR code';
-  if (!stream) {
-    startCamera();
-  } else {
-    scanning = true;
-    requestAnimationFrame(scanLoop);
-  }
-}
-
-// --- File upload fallback ---
+// --- File upload (still-image mode) ---
 async function handleFile(file) {
   const img = new Image();
   const url = URL.createObjectURL(file);
@@ -380,24 +538,70 @@ async function handleFile(file) {
   const imgData = ctx.getImageData(0, 0, tmp.width, tmp.height);
   const result = jsQR(imgData.data, tmp.width, tmp.height, { inversionAttempts: 'attemptBoth' });
   URL.revokeObjectURL(url);
-  if (!result) {
+  if (!result || !isPlausibleDetection(result, tmp.width, tmp.height)) {
     statusEl.textContent = 'No QR code found in that image.';
     return;
   }
+  // Switch to still mode: stop camera, show captureCanvas with image, draw overlay once
   stopCamera();
+  mode = 'still';
+  captureCanvas.width = tmp.width;
+  captureCanvas.height = tmp.height;
+  overlayCanvas.width = tmp.width;
+  overlayCanvas.height = tmp.height;
+  captureCanvas.getContext('2d').putImageData(imgData, 0, 0);
   video.style.display = 'none';
-  freezeOnDetection(imgData, result);
+  captureCanvas.style.display = 'block';
+
+  const version = result.version || 1;
+  const { size, regions: grouped } = getRegionsForVersion(version);
+  let formatInfo = null;
+  try { formatInfo = decodeFormatInfo(sampleBitMatrix(imgData, result.location, size), size); } catch {}
+
+  qrInfo = { version, size, location: result.location, data: result.data, chunks: result.chunks, formatInfo };
+  regions = grouped;
+  statusEl.textContent = `Loaded image — version ${version} (${size}×${size})  ·  tap a section`;
+  renderSummary();
+  drawOverlay();
+  resumeBtn.hidden = false;
+}
+
+function backToLive() {
+  mode = 'live';
+  qrInfo = null;
+  regions = [];
+  summary.hidden = true;
+  resumeBtn.hidden = true;
+  closeSheet();
+  captureCanvas.style.display = 'none';
+  video.style.display = 'block';
+  clearOverlay();
+  if (!stream) startCamera();
+  else { scanning = true; requestAnimationFrame(scanLoop); }
 }
 
 // --- Wire up ---
 overlayCanvas.addEventListener('click', handleOverlayClick);
 sheetClose.addEventListener('click', closeSheet);
-resumeBtn.addEventListener('click', resumeScan);
+resumeBtn.addEventListener('click', backToLive);
 fileInput.addEventListener('change', (e) => {
   const f = e.target.files?.[0];
   if (f) handleFile(f);
 });
 legendBtn.addEventListener('click', () => legend.classList.toggle('open'));
+document.addEventListener('click', (e) => {
+  // close tooltips when clicking outside
+  if (!e.target.closest('.tip')) {
+    document.querySelectorAll('.tip.open').forEach((t) => t.classList.remove('open'));
+  }
+});
+readPathBtn.addEventListener('click', () => {
+  readPathOn = !readPathOn;
+  readPathBtn.setAttribute('aria-pressed', String(readPathOn));
+  document.body.classList.toggle('readpath-on', readPathOn);
+  if (qrInfo) drawOverlay();
+});
+window.addEventListener('resize', syncOverlaySize);
 
 // Init
 if (!jsQR) {
@@ -406,7 +610,6 @@ if (!jsQR) {
   startCamera();
 }
 
-// Service worker
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').catch(() => {});
 }

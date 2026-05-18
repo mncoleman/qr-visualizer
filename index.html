@@ -9,7 +9,8 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="description" content="Point your camera at a QR code to see every section highlighted and explained — finder patterns, timing patterns, data, error correction, and more." />
 
-  <title>QR X-Ray — see inside a QR code</title>
+  <title>QR Visualizer — see inside a QR code</title>
+  <meta name="application-name" content="QR Visualizer" />
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
@@ -28,7 +29,7 @@
         <span></span><span class="off"></span><span class="off"></span><span class="off"></span><span class="off"></span><span class="off"></span><span></span>
         <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
       </span>
-      QR X-Ray
+      QR Visualizer
     </a>
     <nav>
       <a href="index.html" class="active">Scan</a>
@@ -41,7 +42,7 @@
       <video id="video" playsinline muted></video>
       <canvas id="capture"></canvas>
       <canvas id="overlay"></canvas>
-      <div class="reticle" aria-hidden="true"><span></span></div>
+      <div class="reticle" aria-hidden="true"></div>
       <div id="status">Loading camera…</div>
       <button id="legend-btn" type="button" aria-label="Toggle color legend">Legend</button>
       <div id="legend" role="region" aria-label="Color legend">
@@ -64,13 +65,25 @@
         Upload
       </label>
       <input id="file-input" type="file" accept="image/*" capture="environment" hidden />
+      <button id="readpath-btn" type="button" class="btn" aria-pressed="false" title="Show the order modules are read">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"></path><path d="M7 14l4-4 4 4 5-5"></path></svg>
+        Read path
+      </button>
       <div class="spacer"></div>
       <button id="resume" type="button" class="btn primary" hidden>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="16"></line><line x1="8" y1="12" x2="16" y2="12"></line></svg>
-        Scan another
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>
+        Back to camera
       </button>
     </div>
   </main>
+
+  <footer class="site-footer">
+    <span>Open source on GitHub —</span>
+    <a href="https://github.com/mncoleman/qr-visualizer" target="_blank" rel="noopener noreferrer">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.55 0-.27-.01-.99-.02-1.94-3.2.69-3.87-1.54-3.87-1.54-.52-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.78 1.19 1.78 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.04 0 0 .97-.31 3.18 1.18.92-.26 1.91-.39 2.89-.39.98 0 1.97.13 2.89.39 2.21-1.49 3.18-1.18 3.18-1.18.63 1.58.23 2.75.11 3.04.74.81 1.19 1.84 1.19 3.1 0 4.43-2.7 5.41-5.27 5.7.41.36.78 1.06.78 2.14 0 1.55-.01 2.8-.01 3.18 0 .31.21.67.8.55C20.21 21.38 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5z"/></svg>
+      mncoleman/qr-visualizer
+    </a>
+  </footer>
 
   <aside id="sheet" class="sheet" role="dialog" aria-modal="false" aria-labelledby="sheet-title">
     <div class="sheet-grab" aria-hidden="true"></div>
