@@ -355,6 +355,7 @@ main {
 .section-pill.length { background: #fb923c; color: #2a1300; }
 .section-pill.content { background: #6ee7b7; color: #062e21; }
 .section-pill.terminator { background: #94a3b8; color: #0b1020; }
+.section-pill.padding { background: #64748b; color: #f8fafc; }
 .section-pill.ecc { background: #ef4444; color: #2b0606; }
 .scrub-bits .bit {
   display: inline-block;

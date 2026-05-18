@@ -1,5 +1,5 @@
 // QR Visualizer service worker — cache-first for the versioned app shell.
-const VERSION = 'qr-vis-v11';
+const VERSION = 'qr-vis-v12';
 const APP_SHELL = [
   './',
   './index.html',

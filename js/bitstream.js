@@ -15,6 +15,28 @@ const MASK_FORMULAS = [
   (r, c) => (((r + c) % 2 + (r * c) % 3) % 2) === 0,
 ];
 
+// Data-codeword count by [version][ecLevel] where ecLevel index: L=0, M=1, Q=2, H=3.
+// Per ISO/IEC 18004 Table 7. Used to draw the line between data-padding bytes
+// (still inside the data section) and actual Reed-Solomon ECC codewords.
+const DATA_CODEWORDS = [
+  null,
+  [19, 16, 13, 9],          [34, 28, 22, 16],         [55, 44, 34, 26],
+  [80, 64, 48, 36],         [108, 86, 62, 46],        [136, 108, 76, 60],
+  [156, 124, 88, 66],       [194, 154, 110, 86],      [232, 182, 132, 100],
+  [274, 216, 154, 122],     [324, 254, 180, 140],     [370, 290, 206, 158],
+  [428, 334, 244, 180],     [461, 365, 261, 197],     [523, 415, 295, 223],
+  [589, 453, 325, 253],     [647, 507, 367, 283],     [721, 563, 397, 313],
+  [795, 627, 445, 341],     [861, 669, 485, 385],     [932, 714, 512, 406],
+  [1006, 782, 568, 442],    [1094, 860, 614, 464],    [1174, 914, 664, 514],
+  [1276, 1000, 718, 538],   [1370, 1062, 754, 596],   [1468, 1128, 808, 628],
+  [1531, 1193, 871, 661],   [1631, 1267, 911, 701],   [1735, 1373, 985, 745],
+  [1843, 1455, 1033, 793],  [1955, 1541, 1115, 845],  [2071, 1631, 1171, 901],
+  [2191, 1725, 1231, 961],  [2306, 1812, 1286, 986],  [2434, 1914, 1354, 1054],
+  [2566, 1992, 1426, 1096], [2702, 2102, 1502, 1142], [2812, 2216, 1582, 1222],
+  [2956, 2334, 1666, 1276],
+];
+const EC_INDEX = { L: 0, M: 1, Q: 2, H: 3 };
+
 const MODE_NAMES = {
   0b0000: 'terminator',
   0b0001: 'numeric',
@@ -101,7 +123,7 @@ export function extractPathBits(bitMatrix, readPath, maskIndex) {
 // Plus a per-bit role lookup: array length = total bits, each entry:
 //   { byteIndex, bitInByte, role: 'mode'|'length'|'content'|'terminator'|'padding'|'ecc',
 //     chunkIndex, char?: string }
-export function parseBitstream(bits, version) {
+export function parseBitstream(bits, version, ecLevel) {
   const totalBits = bits.length;
   const chunks = [];
   const perBit = new Array(totalBits);
@@ -109,14 +131,21 @@ export function parseBitstream(bits, version) {
   let chunkIdx = 0;
 
   // Helper to mark a range with role
-  const markRange = (from, to, role, chunkIndex = null, charMap = null) => {
+  const markRange = (from, to, role, chunkIndex = null) => {
     for (let i = from; i < to && i < totalBits; i++) {
       perBit[i] = perBit[i] || {};
       perBit[i].role = role;
       if (chunkIndex != null) perBit[i].chunkIndex = chunkIndex;
-      if (charMap && charMap[i] !== undefined) perBit[i].char = charMap[i];
     }
   };
+
+  // Data section boundary (bytes 0..dataBytes-1 = data section; rest = ECC).
+  // Within data section: mode + length + content + terminator + padding.
+  const ecIdx = EC_INDEX[ecLevel];
+  const dataBytes = (DATA_CODEWORDS[version] && ecIdx != null)
+    ? DATA_CODEWORDS[version][ecIdx]
+    : Math.floor(totalBits / 16); // crude fallback: half data, half ECC
+  const dataBoundaryBit = dataBytes * 8;
 
   let terminatorBit = null;
   while (off + 4 <= totalBits) {
@@ -174,31 +203,24 @@ export function parseBitstream(bits, version) {
     chunkIdx++;
   }
 
-  // Anything between off (or terminator) and the byte boundary that completes the final data byte
-  // is "padding within byte". Anything after, up to a multiple of 8, is also data-padding bytes
-  // (alternating 0xEC, 0x11). Everything beyond the data capacity is ECC. We approximate by
-  // marking from current position to the end as 'ecc' since we don't know the exact data byte
-  // count without consulting the spec table per version+EC level.
+  // After content (or terminator), anything before the data/ECC boundary is
+  // 'padding' (bit-pad to byte boundary, then 0xEC/0x11 padding bytes).
+  // Anything after the boundary is true Reed-Solomon ECC.
   const dataPadStart = off;
-  let i = dataPadStart;
-  // Mark padding bits in the same chunk-less role
-  if (terminatorBit !== null) {
-    for (let t = terminatorBit + 4; t < terminatorBit + 4; t++) {} // noop
+  for (let i = dataPadStart; i < totalBits; i++) {
+    if (perBit[i]) continue;
+    perBit[i] = { role: i < dataBoundaryBit ? 'padding' : 'ecc' };
   }
-  for (; i < totalBits; i++) {
-    if (!perBit[i]) perBit[i] = { role: 'ecc' };
-  }
-  // The terminator nibble itself
   if (terminatorBit !== null) {
     markRange(terminatorBit, terminatorBit + 4, 'terminator', null);
   }
 
   // Add byte index / bitInByte to all entries
   for (let k = 0; k < totalBits; k++) {
-    if (!perBit[k]) perBit[k] = { role: 'ecc' };
+    if (!perBit[k]) perBit[k] = { role: k < dataBoundaryBit ? 'padding' : 'ecc' };
     perBit[k].byteIndex = Math.floor(k / 8);
     perBit[k].bitInByte = k % 8;
   }
 
-  return { chunks, perBit, terminatorBit, eccStartBit: dataPadStart };
+  return { chunks, perBit, terminatorBit, eccStartBit: dataBoundaryBit, dataBytes };
 }

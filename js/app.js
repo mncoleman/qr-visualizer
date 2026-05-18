@@ -316,7 +316,7 @@ function ensureBitstream(qi, imageData) {
     const bitMatrix = sampleBitMatrix(imageData, qi.location, qi.size);
     const pathArr = getReadPath(qi.version);
     const bits = extractPathBits(bitMatrix, pathArr, qi.formatInfo.mask);
-    const parsed = parseBitstream(bits, qi.version);
+    const parsed = parseBitstream(bits, qi.version, qi.formatInfo.ecLevel);
     qi.pathBits = bits;
     qi.parsed = parsed;
   } catch (e) {
@@ -384,6 +384,7 @@ function renderScrubInfo(idx) {
     case 'length':      sectionName = 'Length field'; sectionClass = 'length'; break;
     case 'content':     sectionName = 'Content'; sectionClass = 'content'; break;
     case 'terminator':  sectionName = 'Terminator'; sectionClass = 'terminator'; break;
+    case 'padding':     sectionName = 'Padding'; sectionClass = 'padding'; break;
     case 'ecc':         sectionName = 'Error correction'; sectionClass = 'ecc'; break;
     default:            sectionName = info.role || 'data'; sectionClass = 'content';
   }
@@ -413,11 +414,15 @@ function renderScrubInfo(idx) {
   if (info.role === 'ecc') {
     eccExtra = `<div class="hint" style="color:var(--muted); font-size:12px; margin-top:2px;">Reed-Solomon parity — not your content, but lets the scanner repair damage.</div>`;
   }
+  let padExtra = '';
+  if (info.role === 'padding') {
+    padExtra = `<div class="hint" style="color:var(--muted); font-size:12px; margin-top:2px;">Filler. The data section is sized in fixed bytes, so any unused space gets padded out (alternating 0xEC and 0x11) before the Reed-Solomon bytes begin.</div>`;
+  }
 
   scrubInfo.innerHTML = `
     <div class="si-row">
       <div class="si-label">Section</div>
-      <div class="si-val"><span class="section-pill ${sectionClass}">${sectionName}</span>${modeExtra}${lengthExtra}${contentExtra}${eccExtra}</div>
+      <div class="si-val"><span class="section-pill ${sectionClass}">${sectionName}</span>${modeExtra}${lengthExtra}${contentExtra}${padExtra}${eccExtra}</div>
     </div>
     <div class="si-row">
       <div class="si-label">Byte ${byteIdx}</div>

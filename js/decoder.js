@@ -113,12 +113,14 @@ function readFormatCopy1(bm) {
 }
 
 function readFormatCopy2(bm, size) {
-  // Per ISO/IEC 18004 §7.9: copy 2 = (size-1..size-7, 8) then (8, size-1..size-8).
-  // Horizontal strip read right-to-left so bit significance lines up with copy 1.
+  // Per ISO/IEC 18004 §7.9 (and Thonky/Nayuki cross-check):
+  //   MSB→LSB in copy 2 = (size-1..size-7, 8) then (8, size-8..size-1).
+  // The vertical strip is read top-of-strip first (bit 14, the MSB) down to bit 8,
+  // then the horizontal strip is read left-to-right (bit 7, MSB of next byte) to bit 0.
   let v = 0;
   const positions = [];
   for (let r = size - 1; r >= size - 7; r--) positions.push([r, 8]);
-  for (let c = size - 1; c >= size - 8; c--) positions.push([8, c]);
+  for (let c = size - 8; c <= size - 1; c++) positions.push([8, c]);
   for (const [r, c] of positions) v = (v << 1) | (bmGet(bm, r, c) ? 1 : 0);
   return v;
 }
